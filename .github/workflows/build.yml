@@ -147,24 +147,38 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p package/extra && cd package/extra
+          # Every third-party source is pinned to a commit that is known to build.
+          # (An unpinned quickstart once switched to an apk-invalid version string and broke the build.)
+          pin() {  # pin <url> <sha> <dir> [sparse paths...]
+            url="$1"; sha="$2"; dir="$3"; shift 3
+            git init -q "$dir"
+            git -C "$dir" remote add origin "$url"
+            if [ "$#" -gt 0 ]; then
+              git -C "$dir" fetch -q --depth 1 --filter=blob:none origin "$sha"
+              git -C "$dir" sparse-checkout set --no-cone "$@"
+            else
+              git -C "$dir" fetch -q --depth 1 origin "$sha"
+            fi
+            git -C "$dir" checkout -q FETCH_HEAD
+          }
           # iStore store + its helpers
-          git clone --depth 1 https://github.com/linkease/istore.git _istore
+          pin https://github.com/linkease/istore.git a97ace34f2da358a015b094d326bba2697697f2e _istore
           cp -r _istore/luci/luci-app-store _istore/luci/luci-lib-taskd _istore/luci/luci-lib-xterm _istore/luci/taskd .
           rm -rf _istore
           # Quickstart dashboard (sparse checkout from small-package)
-          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/kenzok8/small-package.git _sp
-          git -C _sp sparse-checkout set quickstart luci-app-quickstart
+          pin https://github.com/kenzok8/small-package.git 115c2ad528594ce47e5188e79c797b8222b9b35d _sp /quickstart /luci-app-quickstart
           cp -r _sp/quickstart _sp/luci-app-quickstart .
           rm -rf _sp
           # Mini disk manager
-          git clone --depth 1 https://github.com/4IceG/luci-app-mini-diskmanager.git _mdm
+          pin https://github.com/4IceG/luci-app-mini-diskmanager.git 4b2b7332896063ef888f34da2187c3cc6f366037 _mdm
           cp -r _mdm/luci-app-mini-diskmanager .
           rm -rf _mdm
           # Theme: Aurora (+ config app)
-          git clone --depth 1 https://github.com/eamonxg/luci-theme-aurora.git luci-theme-aurora
-          git clone --depth 1 https://github.com/eamonxg/luci-app-aurora-config.git luci-app-aurora-config
+          pin https://github.com/eamonxg/luci-theme-aurora.git 298dbcc74ddf820923a51285fb0826d429e5d7ca luci-theme-aurora
+          pin https://github.com/eamonxg/luci-app-aurora-config.git a5299ce0144859f47683ec3bc40805bf616f534f luci-app-aurora-config
           rm -rf luci-theme-aurora/.git luci-app-aurora-config/.git
           ls
+          grep -H -E '^PKG_VERSION' luci-app-quickstart/Makefile quickstart/Makefile luci-app-store/Makefile
 
       - name: Write .config
         working-directory: openwrt
