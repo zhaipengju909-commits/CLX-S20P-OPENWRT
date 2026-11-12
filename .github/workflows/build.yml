@@ -203,13 +203,23 @@ jobs:
           CONFIG_PACKAGE_iperf3=y
           CONFIG_PACKAGE_irqbalance=y
           CFG
-          make defconfig
-          grep -q '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_clx_s20p=y' .config
-          grep -q '^CONFIG_ALL_KMODS=y' .config
-          grep -q '^CONFIG_PACKAGE_luci=y' .config
+          set +e
+          make defconfig > /tmp/defconfig.log 2>&1
+          rc=$?
+          set -e
+          echo "make defconfig exit code: $rc"
+          grep -v -E 'recursive dependency|kbuild|kconfig-language|Kconfig recursive|^$' /tmp/defconfig.log | tail -n 30 || true
+          echo "--- selected key symbols ---"
+          grep -E 'DEVICE_clx_s20p|^CONFIG_ALL_KMODS|^CONFIG_PACKAGE_luci=|^CONFIG_TARGET_(mediatek|BOARD)' .config || true
+          fail=0
+          chk() { grep -q "$1" .config || { echo "CHECK FAILED: $1"; fail=1; }; }
+          chk '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_clx_s20p=y'
+          chk '^CONFIG_ALL_KMODS=y'
+          chk '^CONFIG_PACKAGE_luci=y'
           for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-argon luci-theme-aurora luci-app-ttyd luci-app-samba4 luci-app-sqm; do
-            grep -q "^CONFIG_PACKAGE_$p=y" .config || { echo "MISSING after defconfig: $p"; exit 1; }
+            chk "^CONFIG_PACKAGE_$p=y"
           done
+          [ "$fail" = 0 ] || exit 1
 
       - name: Download sources
         working-directory: openwrt
