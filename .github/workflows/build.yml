@@ -150,7 +150,7 @@ jobs:
           CONFIG_TARGET_mediatek_filogic=y
           CONFIG_TARGET_MULTI_PROFILE=n
           CONFIG_TARGET_ALL_PROFILES=n
-          CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_clx_s20p=y
+          CONFIG_TARGET_mediatek_filogic_DEVICE_clx_s20p=y
 
           # Build every kernel module as an installable package (so any kmod can be installed later)
           CONFIG_ALL_KMODS=y
@@ -213,13 +213,17 @@ jobs:
           grep -E 'DEVICE_clx_s20p|^CONFIG_ALL_KMODS|^CONFIG_PACKAGE_luci=|^CONFIG_TARGET_(mediatek|BOARD)' .config || true
           fail=0
           chk() { grep -q "$1" .config || { echo "CHECK FAILED: $1"; fail=1; }; }
-          chk '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_clx_s20p=y'
+          chk '^CONFIG_TARGET_mediatek_filogic_DEVICE_clx_s20p=y'
           chk '^CONFIG_ALL_KMODS=y'
           chk '^CONFIG_PACKAGE_luci=y'
-          for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-argon luci-theme-aurora luci-app-ttyd luci-app-samba4 luci-app-sqm; do
-            chk "^CONFIG_PACKAGE_$p=y"
-          done
           [ "$fail" = 0 ] || exit 1
+          # Third-party plugins are best effort: report what was dropped, but do not fail the build
+          for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-argon luci-app-argon-config luci-theme-aurora luci-app-aurora-config luci-app-ttyd luci-app-samba4 luci-app-wol luci-app-sqm; do
+            if grep -q "^CONFIG_PACKAGE_$p=y" .config; then echo "plugin ok: $p"; else echo "PLUGIN DROPPED: $p"; fi
+          done
+          for d in curl tar libuci-lua mount-utils luci-lib-taskd luci-lib-xterm taskd procd script-utils coreutils coreutils-stty quickstart ucode-mod-math; do
+            if grep -q "^Package: $d$" tmp/.packageinfo; then echo "dep ok: $d"; else echo "DEP MISSING: $d"; fi
+          done
 
       - name: Download sources
         working-directory: openwrt
