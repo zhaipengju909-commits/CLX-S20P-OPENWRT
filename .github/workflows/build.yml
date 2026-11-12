@@ -112,6 +112,30 @@ jobs:
           print("S20P device registered")
           PY
 
+      - name: Set default LAN address and root password
+        working-directory: openwrt
+        run: |
+          set -euo pipefail
+          # Default LAN address 192.168.2.1 (official default is 192.168.1.1)
+          sed -i 's/192\.168\.1\.1/192.168.2.1/g' package/base-files/files/bin/config_generate
+          grep -q '192\.168\.2\.1' package/base-files/files/bin/config_generate
+          # Default root password "openwrt" (SHA-512 hash written into the default shadow file)
+          HASH="$(openssl passwd -6 openwrt)"
+          HASH="$HASH" python3 - <<'PY2'
+          import os
+          p = "package/base-files/files/etc/shadow"
+          lines = open(p).read().splitlines()
+          out = []
+          for l in lines:
+              if l.startswith("root:"):
+                  f = l.split(":")
+                  f[1] = os.environ["HASH"]
+                  l = ":".join(f)
+              out.append(l)
+          open(p, "w").write("\n".join(out) + "\n")
+          PY2
+          grep '^root:' package/base-files/files/etc/shadow | cut -c1-20
+
       - name: Update and install feeds
         working-directory: openwrt
         run: |
@@ -243,6 +267,14 @@ jobs:
         run: |
           make -j"$(nproc)" || make -j1 V=s
 
+      - name: Verify defaults inside the built rootfs
+        if: ${{ !inputs.config_only }}
+        run: |
+          R="$(ls -d openwrt/build_dir/target-*/root-* 2>/dev/null | head -1)"
+          echo "rootfs dir: $R"
+          grep -n '192\.168\.2\.1' "$R/bin/config_generate" | head -3 || echo "VERIFY FAILED: lan ip"
+          grep -q '^root:\$6\$' "$R/etc/shadow" && echo "verify ok: root password hash present" || echo "VERIFY FAILED: root password"
+
       - name: Collect artifacts
         if: ${{ !inputs.config_only }}
         run: |
@@ -260,6 +292,24 @@ jobs:
         if: ${{ !inputs.config_only }}
         run: |
           TAG="s20p-$(date -u +%Y%m%d-%H%M)"
+          cat > notes.md <<NOTES
+          ## CLX S20P - official OpenWrt (experimental)
+
+          **This is a practice project. It has NOT been verified to boot, and it has not been shown to work correctly on real hardware. Flashing may leave the device unusable. Use at your own risk, and only if you can recover the device yourself (U-Boot / serial). No warranty of any kind.**
+
+          **这是练手项目，尚未验证能否开机，也不保证所有功能正常。刷机可能导致设备无法启动，风险自负；请先备份并确认自己有恢复手段（U-Boot / 串口）。不提供任何担保。**
+
+          - Management address / 管理地址: http://192.168.2.1
+          - Username / 用户名: root, Password / 密码: openwrt  (change it right after first login / 登录后请立即修改)
+          - Board name / 机型标识: clx,s20p (CLX S20P, Super Gateway S20P hardware is the same / 超级网关 S20P 硬件相同)
+          - Base / 基础: official openwrt/openwrt branch $BRANCH, upstream commit $(cat upstream-commit.txt)
+          - Device tree derived from VIKINGYFY/immortalwrt (GPL-2.0-or-later OR MIT)
+          - Extra packages / 额外插件: iStore store, quickstart, argon + aurora themes, mini-diskmanager, ttyd, samba4, sqm, wol; all kernel modules are built as packages
+          - Flash with sysupgrade WITHOUT keeping settings / 刷机时不要勾选"保留配置"
+          - Not affiliated with OpenWrt, CLX, Super Gateway or any plugin author. Not an official release.
+          - See the repository README for details / 详见仓库 README
+          NOTES
+          sed -i 's/^          //' notes.md
           gh release create "$TAG" out/* --target "${{ github.sha }}" \
-            --title "CLX S20P official OpenWrt $TAG" \
-            --notes "Source: official openwrt/openwrt $BRANCH. Upstream commit: $(cat upstream-commit.txt). Board name clx,s20p. Not yet tested on hardware."
+            --title "CLX S20P official OpenWrt $TAG (experimental, untested)" \
+            --notes-file notes.md
