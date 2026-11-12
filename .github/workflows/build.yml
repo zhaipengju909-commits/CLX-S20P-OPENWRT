@@ -7,6 +7,10 @@ on:
         description: "OpenWrt branch or tag to build"
         required: true
         default: "openwrt-25.12"
+      config_only:
+        description: "Stop after .config checks (fast test, no firmware)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -139,6 +143,10 @@ jobs:
           git clone --depth 1 https://github.com/eamonxg/luci-theme-aurora.git luci-theme-aurora
           git clone --depth 1 https://github.com/eamonxg/luci-app-aurora-config.git luci-app-aurora-config
           rm -rf luci-theme-aurora/.git luci-app-aurora-config/.git
+          # iStore: make the version strings acceptable to apk and drop the ipk-style version constraint
+          sed -i -E 's/^PKG_VERSION:=([0-9.]+)-r?[0-9]+$/PKG_VERSION:=\1/; s/^PKG_RELEASE:=$/PKG_RELEASE:=1/' luci-app-store/Makefile
+          sed -i -E 's/^LUCI_EXTRA_DEPENDS:=.*$//' luci-app-store/Makefile
+          grep -nE 'PKG_VERSION|PKG_RELEASE|LUCI_DEPENDS|LUCI_EXTRA' luci-app-store/Makefile
           ls
 
       - name: Write .config
@@ -221,20 +229,25 @@ jobs:
           for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-argon luci-app-argon-config luci-theme-aurora luci-app-aurora-config luci-app-ttyd luci-app-samba4 luci-app-wol luci-app-sqm; do
             if grep -q "^CONFIG_PACKAGE_$p=y" .config; then echo "plugin ok: $p"; else echo "PLUGIN DROPPED: $p"; fi
           done
+          echo '--- luci-app-store config entry ---'; grep -n -A12 'config PACKAGE_luci-app-store$' tmp/.config-package.in | head -30 || true
+          grep -n -A12 '^Package: luci-app-store$' tmp/.packageinfo | head -20 || true
           for d in curl tar libuci-lua mount-utils luci-lib-taskd luci-lib-xterm taskd procd script-utils coreutils coreutils-stty quickstart ucode-mod-math; do
             if grep -q "^Package: $d$" tmp/.packageinfo; then echo "dep ok: $d"; else echo "DEP MISSING: $d"; fi
           done
 
       - name: Download sources
+        if: ${{ !inputs.config_only }}
         working-directory: openwrt
         run: make download -j8
 
       - name: Build
+        if: ${{ !inputs.config_only }}
         working-directory: openwrt
         run: |
           make -j"$(nproc)" || make -j1 V=s
 
       - name: Collect artifacts
+        if: ${{ !inputs.config_only }}
         run: |
           mkdir -p out
           T=openwrt/bin/targets/mediatek/filogic
@@ -247,6 +260,7 @@ jobs:
           ls -lh out
 
       - name: Publish release
+        if: ${{ !inputs.config_only }}
         run: |
           TAG="s20p-$(date -u +%Y%m%d-%H%M)"
           gh release create "$TAG" out/* --target "${{ github.sha }}" \
