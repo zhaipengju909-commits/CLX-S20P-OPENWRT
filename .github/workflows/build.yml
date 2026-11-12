@@ -114,6 +114,33 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
+      - name: Add extra plugins (store, quickstart, themes, disk manager)
+        working-directory: openwrt
+        run: |
+          set -euo pipefail
+          mkdir -p package/extra && cd package/extra
+          # iStore store + its helpers
+          git clone --depth 1 https://github.com/linkease/istore.git _istore
+          cp -r _istore/luci/luci-app-store _istore/luci/luci-lib-taskd _istore/luci/luci-lib-xterm _istore/luci/taskd .
+          rm -rf _istore
+          # Quickstart dashboard (sparse checkout from small-package)
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/kenzok8/small-package.git _sp
+          git -C _sp sparse-checkout set quickstart luci-app-quickstart
+          cp -r _sp/quickstart _sp/luci-app-quickstart .
+          rm -rf _sp
+          # Mini disk manager
+          git clone --depth 1 https://github.com/4IceG/luci-app-mini-diskmanager.git _mdm
+          cp -r _mdm/luci-app-mini-diskmanager .
+          rm -rf _mdm
+          # Themes: Argon (25.12 branch) and Aurora (+ config apps)
+          git clone --depth 1 --branch openwrt-25.12 https://github.com/sbwml/luci-theme-argon.git _argon
+          cp -r _argon/luci-theme-argon _argon/luci-app-argon-config .
+          rm -rf _argon
+          git clone --depth 1 https://github.com/eamonxg/luci-theme-aurora.git luci-theme-aurora
+          git clone --depth 1 https://github.com/eamonxg/luci-app-aurora-config.git luci-app-aurora-config
+          rm -rf luci-theme-aurora/.git luci-app-aurora-config/.git
+          ls
+
       - name: Write .config
         working-directory: openwrt
         run: |
@@ -143,6 +170,25 @@ jobs:
           CONFIG_PACKAGE_luci-i18n-ddns-zh-cn=y
           CONFIG_PACKAGE_luci-proto-wireguard=y
 
+          # Extra official apps
+          CONFIG_PACKAGE_luci-app-ttyd=y
+          CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
+          CONFIG_PACKAGE_luci-app-samba4=y
+          CONFIG_PACKAGE_luci-i18n-samba4-zh-cn=y
+          CONFIG_PACKAGE_luci-app-wol=y
+          CONFIG_PACKAGE_luci-i18n-wol-zh-cn=y
+          CONFIG_PACKAGE_luci-app-sqm=y
+          CONFIG_PACKAGE_luci-i18n-sqm-zh-cn=y
+
+          # Third-party apps kept per user choice (sources cloned into package/extra)
+          CONFIG_PACKAGE_luci-app-store=y
+          CONFIG_PACKAGE_luci-app-quickstart=y
+          CONFIG_PACKAGE_luci-app-mini-diskmanager=y
+          CONFIG_PACKAGE_luci-theme-argon=y
+          CONFIG_PACKAGE_luci-app-argon-config=y
+          CONFIG_PACKAGE_luci-theme-aurora=y
+          CONFIG_PACKAGE_luci-app-aurora-config=y
+
           # Storage / M.2 / USB
           CONFIG_PACKAGE_block-mount=y
           CONFIG_PACKAGE_kmod-usb-storage=y
@@ -161,6 +207,9 @@ jobs:
           grep -q '^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_clx_s20p=y' .config
           grep -q '^CONFIG_ALL_KMODS=y' .config
           grep -q '^CONFIG_PACKAGE_luci=y' .config
+          for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-argon luci-theme-aurora luci-app-ttyd luci-app-samba4 luci-app-sqm; do
+            grep -q "^CONFIG_PACKAGE_$p=y" .config || { echo "MISSING after defconfig: $p"; exit 1; }
+          done
 
       - name: Download sources
         working-directory: openwrt
