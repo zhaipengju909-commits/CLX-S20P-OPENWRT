@@ -143,10 +143,6 @@ jobs:
           git clone --depth 1 https://github.com/eamonxg/luci-theme-aurora.git luci-theme-aurora
           git clone --depth 1 https://github.com/eamonxg/luci-app-aurora-config.git luci-app-aurora-config
           rm -rf luci-theme-aurora/.git luci-app-aurora-config/.git
-          # iStore: make the version strings acceptable to apk and drop the ipk-style version constraint
-          sed -i -E 's/^PKG_VERSION:=([0-9.]+)-r?[0-9]+$/PKG_VERSION:=\1/; s/^PKG_RELEASE:=$/PKG_RELEASE:=1/' luci-app-store/Makefile
-          sed -i -E 's/^LUCI_EXTRA_DEPENDS:=.*$//' luci-app-store/Makefile
-          grep -nE 'PKG_VERSION|PKG_RELEASE|LUCI_DEPENDS|LUCI_EXTRA' luci-app-store/Makefile
           ls
 
       - name: Write .config
@@ -189,6 +185,7 @@ jobs:
           CONFIG_PACKAGE_luci-i18n-sqm-zh-cn=y
 
           # Third-party apps kept per user choice (sources cloned into package/extra)
+          CONFIG_PACKAGE_xz-utils=y
           CONFIG_PACKAGE_luci-app-store=y
           CONFIG_PACKAGE_luci-app-quickstart=y
           CONFIG_PACKAGE_luci-app-mini-diskmanager=y
