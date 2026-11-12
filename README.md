@@ -39,7 +39,7 @@
 - **官方原版 LuCI**，默认主题 bootstrap，中文界面。
 - **全套内核模块**：`CONFIG_ALL_KMODS=y`，所有内核模块都编成了可安装的包，后面缺什么驱动都能装（打包在 Release 的 `kmod-and-packages.tar.zst` 里）。
 - **额外插件**（官方源）：ttyd 终端、samba4 共享、wol 网络唤醒、sqm 限速、upnp、ddns、wireguard。
-- **额外插件**（第三方源，编译时现拉）：iStore 商店（luci-app-store）、quickstart 首页、argon 和 aurora 两个主题、mini-diskmanager 磁盘管理。
+- **额外插件**（第三方源，编译时现拉）：iStore 商店（luci-app-store）、quickstart 首页、aurora 主题、mini-diskmanager 磁盘管理。
 - **没有预装代理类插件**（openclash、passwall 等），等能开机了再自己装。
 - **没有的东西**：联发科 SDK 专用的 turboacc-mtk、eqos-mtk、mtwifi-cfg 不能用在官方内核上。硬件加速改用官方的"硬件流量卸载"，无线走官方 mt76 驱动。
 
@@ -87,7 +87,6 @@
 | luci-app-mini-diskmanager | [4IceG/luci-app-mini-diskmanager](https://github.com/4IceG/luci-app-mini-diskmanager) | MIT |
 | luci-theme-aurora、luci-app-aurora-config | [eamonxg](https://github.com/eamonxg) | Apache-2.0 |
 | quickstart、luci-app-quickstart | [kenzok8/small-package](https://github.com/kenzok8/small-package) | 见其仓库及各包 Makefile（quickstart 的二进制是编译时从 linkease 的预编译发布页下载的） |
-| luci-theme-argon、luci-app-argon-config | [sbwml/luci-theme-argon](https://github.com/sbwml/luci-theme-argon) | 见其仓库 |
 
 其余软件包来自 OpenWrt 官方软件源，许可证各不相同。
 
