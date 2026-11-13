@@ -24,6 +24,9 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      - name: Checkout this repository (full-cone patches and package files)
+        uses: actions/checkout@v4
+
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
@@ -136,6 +139,45 @@ jobs:
           PY2
           grep '^root:' package/base-files/files/etc/shadow | cut -c1-20
 
+      - name: Add full-cone NAT (nftables fullcone, patches adapted from ImmortalWrt)
+        working-directory: openwrt
+        run: |
+          set -euo pipefail
+          FC="$GITHUB_WORKSPACE/fullcone"
+          LIBNFTNL_VER="$(sed -n 's/^PKG_VERSION:=//p' package/libs/libnftnl/Makefile)"
+          NFT_VER="$(sed -n 's/^PKG_VERSION:=//p' package/network/utils/nftables/Makefile)"
+          FW4_SHA="$(sed -n 's/^PKG_SOURCE_VERSION:=//p' package/network/config/firewall4/Makefile)"
+          echo "upstream versions in this tree: libnftnl=$LIBNFTNL_VER nftables=$NFT_VER firewall4=$FW4_SHA"
+          T="$(mktemp -d)"
+          dl() { for i in 1 2 3 4; do curl -fsSL -m 120 -o "$2" "$1" && return 0; sleep 3; done; return 1; }
+          # Preflight: every patch must apply cleanly to the exact upstream sources, after the patches official OpenWrt already carries.
+          # If official openwrt-25.12 moves to other versions, stop here instead of building a broken firewall.
+          dl "https://sources.cdn.openwrt.org/libnftnl-$LIBNFTNL_VER.tar.xz" "$T/nl.tar.xz" || dl "https://netfilter.org/projects/libnftnl/files/libnftnl-$LIBNFTNL_VER.tar.xz" "$T/nl.tar.xz"
+          tar -C "$T" -xf "$T/nl.tar.xz"
+          (cd "$T/libnftnl-$LIBNFTNL_VER" \
+            && for p in $(ls "$OLDPWD/package/libs/libnftnl/patches"/*.patch 2>/dev/null | sort); do patch -p1 -s < "$p"; done \
+            && patch -p1 --dry-run < "$FC/libnftnl/100-libnftnl-add-fullcone-expression-support.patch")
+          dl "https://sources.cdn.openwrt.org/nftables-$NFT_VER.tar.xz" "$T/nft.tar.xz" || dl "https://netfilter.org/projects/nftables/files/nftables-$NFT_VER.tar.xz" "$T/nft.tar.xz"
+          tar -C "$T" -xf "$T/nft.tar.xz"
+          (cd "$T/nftables-$NFT_VER" \
+            && for p in $(ls "$OLDPWD/package/network/utils/nftables/patches"/*.patch 2>/dev/null | sort); do patch -p1 -s < "$p"; done \
+            && patch -p1 --dry-run < "$FC/nftables/100-nftables-add-fullcone-expression-support.patch")
+          git clone -q https://github.com/openwrt/firewall4.git "$T/fw4"
+          git -C "$T/fw4" checkout -q "$FW4_SHA"
+          (cd "$T/fw4" \
+            && for p in $(ls "$OLDPWD/package/network/config/firewall4/patches"/*.patch 2>/dev/null | sort); do git apply "$p"; done \
+            && git apply --check "$FC/firewall4/100-firewall4-add-support-for-fullcone-nat.patch")
+          echo "preflight OK: all full-cone patches apply cleanly"
+          # Install into the tree
+          for pair in "libnftnl:package/libs/libnftnl" "nftables:package/network/utils/nftables" "firewall4:package/network/config/firewall4"; do
+            src="${pair%%:*}"; dst="${pair#*:}"
+            mkdir -p "$dst/patches"
+            cp "$FC/$src"/*.patch "$dst/patches/"
+          done
+          rm -rf package/network/utils/fullconenat-nft
+          cp -r "$FC/fullconenat-nft" package/network/utils/fullconenat-nft
+          ls package/libs/libnftnl/patches package/network/utils/nftables/patches package/network/config/firewall4/patches package/network/utils/fullconenat-nft
+
       - name: Update and install feeds
         working-directory: openwrt
         run: |
@@ -239,6 +281,10 @@ jobs:
           CONFIG_PACKAGE_tcpdump=y
           CONFIG_PACKAGE_iperf3=y
           CONFIG_PACKAGE_irqbalance=y
+
+          # Full-cone NAT kernel module (patches in fullcone/, off by default) and SFTP server (so scp works with dropbear)
+          CONFIG_PACKAGE_kmod-nft-fullcone=y
+          CONFIG_PACKAGE_openssh-sftp-server=y
           CFG
           set +e
           make defconfig > /tmp/defconfig.log 2>&1
@@ -255,7 +301,7 @@ jobs:
           chk '^CONFIG_PACKAGE_luci=y'
           [ "$fail" = 0 ] || exit 1
           # Third-party plugins are best effort: report what was dropped, but do not fail the build
-          for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-aurora luci-app-aurora-config luci-app-ttyd luci-app-samba4 luci-compat; do
+          for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-aurora luci-app-aurora-config luci-app-ttyd luci-app-samba4 luci-compat kmod-nft-fullcone openssh-sftp-server; do
             if grep -q "^CONFIG_PACKAGE_$p=y" .config; then echo "plugin ok: $p"; else echo "PLUGIN DROPPED: $p"; fi
           done
           for p in luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-upnp-zh-cn luci-i18n-samba4-zh-cn; do
@@ -285,6 +331,12 @@ jobs:
           echo "rootfs dir: $R"
           grep -n '192\.168\.2\.1' "$R/bin/config_generate" | head -3 || echo "VERIFY FAILED: lan ip"
           grep -q '^root:\$6\$' "$R/etc/shadow" && echo "verify ok: root password hash present" || echo "VERIFY FAILED: root password"
+          [ -f "$R/usr/share/firewall4/templates/zone-fullcone.uc" ] && echo "verify ok: firewall4 fullcone template" || echo "VERIFY FAILED: firewall4 fullcone template"
+          grep -q 'fullcone' "$R/usr/share/ucode/fw4.uc" && echo "verify ok: fw4.uc knows fullcone" || echo "VERIFY FAILED: fw4.uc fullcone"
+          grep -aq 'fullcone' "$R"/usr/lib/libnftnl.so* && echo "verify ok: libnftnl has fullcone" || echo "VERIFY FAILED: libnftnl fullcone"
+          grep -aq 'fullcone' "$R/usr/sbin/nft" && echo "verify ok: nft has fullcone" || echo "VERIFY FAILED: nft fullcone"
+          ls openwrt/bin/targets/mediatek/filogic/packages/kmod-nft-fullcone-*.apk >/dev/null 2>&1 && echo "verify ok: kmod-nft-fullcone package built" || echo "VERIFY FAILED: kmod-nft-fullcone package"
+          [ -f "$R/usr/libexec/sftp-server" ] && echo "verify ok: sftp-server in image" || echo "VERIFY FAILED: sftp-server"
 
       - name: Collect artifacts
         if: ${{ !inputs.config_only }}
@@ -338,7 +390,8 @@ jobs:
           - Board name / 机型标识: clx,s20p (CLX S20P, Super Gateway S20P hardware is the same / 超级网关 S20P 硬件相同)
           - Base / 基础: official openwrt/openwrt branch $BRANCH, upstream commit $(cat upstream-commit.txt)
           - Device tree derived from VIKINGYFY/immortalwrt (GPL-2.0-or-later OR MIT)
-          - Extra packages / 额外插件: iStore store, quickstart, aurora theme, mini-diskmanager, ttyd, samba4, luci-compat; all kernel modules are built as packages
+          - Extra packages / 额外插件: iStore store, quickstart, aurora theme, mini-diskmanager, ttyd, samba4, luci-compat, openssh-sftp-server; all kernel modules are built as packages
+          - Full-cone NAT (nftables, not in official OpenWrt; patches in fullcone/) is available but OFF by default: set option fullcone '1' in the firewall defaults / 全锥型 NAT 默认关闭，需要在防火墙 defaults 里设置 option fullcone '1'
           - Flash with sysupgrade WITHOUT keeping settings / 刷机时不要勾选"保留配置"
           - Not affiliated with OpenWrt, CLX, Super Gateway or any plugin author. Not an official release.
           - See the repository README for details / 详见仓库 README
