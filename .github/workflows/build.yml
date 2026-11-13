@@ -304,8 +304,20 @@ jobs:
           cp openwrt/.config "out/${NAME}.config"
           tar -C "$T" -I 'zstd -T0 -10' -cf "out/${NAME}-packages.tar.zst" packages
           (cd out && sha256sum "${NAME}-sysupgrade.bin" > "${NAME}.sha256")
-          ls -lh out
+          # initramfs (RAM-boot test image): kept as a workflow artifact, not published in the release
+          mkdir -p ram
+          cp "$T"/*clx_s20p*initramfs-kernel.bin "ram/${NAME}-initramfs-kernel.bin"
+          (cd ram && sha256sum "${NAME}-initramfs-kernel.bin" > "${NAME}-initramfs.sha256")
+          ls -lh out ram
           cat "out/${NAME}.sha256"
+
+      - name: Upload initramfs test image (workflow artifact)
+        if: ${{ !inputs.config_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: initramfs-${{ env.NAME }}
+          path: ram/*
+          retention-days: 14
 
       - name: Publish release
         if: ${{ !inputs.config_only }}
