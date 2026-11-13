@@ -339,7 +339,7 @@ jobs:
           [ -f "$R/usr/share/firewall4/templates/zone-fullcone.uc" ] && echo "verify ok: firewall4 fullcone template" || echo "VERIFY FAILED: firewall4 fullcone template"
           grep -q 'fullcone' "$R/usr/share/ucode/fw4.uc" && echo "verify ok: fw4.uc knows fullcone" || echo "VERIFY FAILED: fw4.uc fullcone"
           grep -aq 'fullcone' "$R"/usr/lib/libnftnl.so* && echo "verify ok: libnftnl has fullcone" || echo "VERIFY FAILED: libnftnl fullcone"
-          grep -aq 'fullcone' "$R/usr/sbin/nft" && echo "verify ok: nft has fullcone" || echo "VERIFY FAILED: nft fullcone"
+          grep -aq 'fullcone' "$R"/usr/lib/libnftables.so* && echo "verify ok: libnftables (nft) has fullcone" || echo "VERIFY FAILED: libnftables fullcone"
           ls openwrt/bin/targets/mediatek/filogic/packages/kmod-nft-fullcone-*.apk >/dev/null 2>&1 && echo "verify ok: kmod-nft-fullcone package built" || echo "VERIFY FAILED: kmod-nft-fullcone package"
           [ -f "$R/usr/libexec/sftp-server" ] && echo "verify ok: sftp-server in image" || echo "VERIFY FAILED: sftp-server"
 
