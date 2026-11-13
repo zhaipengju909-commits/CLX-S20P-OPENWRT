@@ -1,15 +1,16 @@
 # Full-cone NAT for nftables (not in official OpenWrt)
 
-Official OpenWrt (openwrt-25.12) has no full-cone NAT support. This directory carries it, copied from
-[immortalwrt/immortalwrt](https://github.com/immortalwrt/immortalwrt) (master, checked at 4765b657625e) and **adapted** to the
-exact upstream versions that official openwrt-25.12 builds:
+Official OpenWrt (openwrt-25.12) has no full-cone NAT support. This directory carries it, copied **unmodified** from the
+`openwrt-25.12` branch of [immortalwrt/immortalwrt](https://github.com/immortalwrt/immortalwrt). That branch builds the same
+upstream versions as official openwrt-25.12 (kernel 6.12, libnftnl 1.3.1, nftables 1.1.6, firewall4 b6e5157).
+(Do not use the patches from ImmortalWrt master: it has moved to libnftnl 1.3.2 and its patch does not build against 1.3.1.)
 
-| Directory | What | Adapted |
-| --- | --- | --- |
-| `libnftnl/` | `fullcone` expression for libnftnl 1.3.1 | applies as-is (line offset only) |
-| `nftables/` | `fullcone` statement for nftables 1.1.6 | scanner.l hunk re-written (official 1.1.6 has no `<*>` prefix on keywords) |
-| `firewall4/` | `option fullcone` / `fullcone6` for firewall4 (commit b6e5157) | NAT action list re-written (official list has no `"npt"`) |
-| `fullconenat-nft/` | kernel module `kmod-nft-fullcone` ([fullcone-nat-nftables/nft-fullcone](https://github.com/fullcone-nat-nftables/nft-fullcone) @ 07d93b6) + a kernel 6.12 build fix | unchanged |
+| Directory | What |
+| --- | --- |
+| `libnftnl/` | `fullcone` expression for libnftnl 1.3.1. The workflow also enables `PKG_FIXUP:=autoreconf` for the package, because the patch edits `src/Makefile.am` (ImmortalWrt's libnftnl Makefile does the same) |
+| `nftables/` | `fullcone` statement for nftables 1.1.6 |
+| `firewall4/` | `option fullcone` / `fullcone6` for firewall4 (commit b6e5157) |
+| `fullconenat-nft/` | kernel module `kmod-nft-fullcone` ([fullcone-nat-nftables/nft-fullcone](https://github.com/fullcone-nat-nftables/nft-fullcone) @ 07d93b6) + a kernel 6.12 build fix |
 
 The workflow dry-runs all patches against the exact upstream sources before building, so a version drift in
 openwrt-25.12 stops the build early instead of producing a broken firewall.
