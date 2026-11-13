@@ -168,6 +168,31 @@ jobs:
             && for p in $(ls "$OLDPWD/package/network/config/firewall4/patches"/*.patch 2>/dev/null | sort); do git apply "$p"; done \
             && git apply --check "$FC/firewall4/100-firewall4-add-support-for-fullcone-nat.patch")
           echo "preflight OK: all full-cone patches apply cleanly"
+          # Kernel patch: let several modules register for conntrack events (CONFIG_NF_CONNTRACK_CHAIN_EVENTS).
+          # nft_fullcone needs it; without it nft_fullcone and nf_conntrack_netlink fight over the single notifier slot
+          # (kernel WARNING in nf_conntrack_register_notifier, full-cone loses its events). Official OpenWrt lacks this patch,
+          # ImmortalWrt carries it in target/linux/generic/hack-6.12 (same kernel 6.12.116).
+          KP="$FC/kernel/952-net-conntrack-events-support-multiple-registrant.patch"
+          KVER="$(sed -n 's/^LINUX_VERSION-6\.12 = //p' target/linux/generic/kernel-6.12)"
+          KHASH="$(awk -v k="LINUX_KERNEL_HASH-6.12$KVER" '$1==k {print $3}' target/linux/generic/kernel-6.12)"
+          echo "kernel: 6.12$KVER (sha256 $KHASH)"
+          dl "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12$KVER.tar.xz" "$T/linux.tar.xz" || dl "https://sources.cdn.openwrt.org/linux-6.12$KVER.tar.xz" "$T/linux.tar.xz"
+          echo "$KHASH  $T/linux.tar.xz" | sha256sum -c -
+          tar -C "$T" -xf "$T/linux.tar.xz"
+          KDIR="$T/linux-6.12$KVER"; KOK=1
+          for d in backport-6.12 pending-6.12 hack-6.12; do
+            for p in $(ls "$PWD/target/linux/generic/$d"/*.patch 2>/dev/null | sort); do
+              (cd "$KDIR" && patch -p1 -s -N --no-backup-if-mismatch < "$p" > /dev/null 2>&1) || { echo "note: official kernel patch did not apply in preflight: $p"; KOK=0; }
+            done
+          done
+          if [ "$KOK" = 1 ]; then
+            (cd "$KDIR" && patch -p1 --dry-run < "$KP") || { echo "ERROR: kernel conntrack-events patch does not apply to 6.12$KVER"; exit 1; }
+            echo "preflight OK: kernel conntrack-events patch applies to 6.12$KVER"
+          else
+            echo "WARNING: kernel preflight inconclusive (an official patch did not apply on the bare tarball); the real build will decide"
+          fi
+          cp "$KP" target/linux/generic/hack-6.12/
+          ls target/linux/generic/hack-6.12 | grep -E '^952-'
           # Install into the tree
           for pair in "libnftnl:package/libs/libnftnl" "nftables:package/network/utils/nftables" "firewall4:package/network/config/firewall4"; do
             src="${pair%%:*}"; dst="${pair#*:}"
@@ -290,6 +315,16 @@ jobs:
           # Full-cone NAT kernel module (patches in fullcone/, off by default) and SFTP server (so scp works with dropbear)
           CONFIG_PACKAGE_kmod-nft-fullcone=y
           CONFIG_PACKAGE_openssh-sftp-server=y
+
+          # Small kernel modules that proxy plugins (PassWall2 / OpenClash) need. Official package feeds do not carry kmods for
+          # our kernel hash, so put them in the image. (kmod-nf-conntrack-netlink is deliberately NOT here yet: it must be checked
+          # on the device together with the conntrack-events kernel patch before it is allowed to load at boot.)
+          CONFIG_PACKAGE_kmod-tun=y
+          CONFIG_PACKAGE_kmod-inet-diag=y
+          CONFIG_PACKAGE_kmod-netlink-diag=y
+          CONFIG_PACKAGE_kmod-nft-tproxy=y
+          # busybox has no nohup
+          CONFIG_PACKAGE_coreutils-nohup=y
           CFG
           set +e
           make defconfig > /tmp/defconfig.log 2>&1
@@ -306,7 +341,7 @@ jobs:
           chk '^CONFIG_PACKAGE_luci=y'
           [ "$fail" = 0 ] || exit 1
           # Third-party plugins are best effort: report what was dropped, but do not fail the build
-          for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-aurora luci-app-aurora-config luci-app-ttyd luci-app-samba4 luci-compat kmod-nft-fullcone openssh-sftp-server; do
+          for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-aurora luci-app-aurora-config luci-app-ttyd luci-app-samba4 luci-compat kmod-nft-fullcone openssh-sftp-server kmod-tun kmod-inet-diag kmod-netlink-diag kmod-nft-tproxy coreutils-nohup; do
             if grep -q "^CONFIG_PACKAGE_$p=y" .config; then echo "plugin ok: $p"; else echo "PLUGIN DROPPED: $p"; fi
           done
           for p in luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-upnp-zh-cn luci-i18n-samba4-zh-cn; do
@@ -342,6 +377,12 @@ jobs:
           grep -aq 'fullcone' "$R"/usr/lib/libnftables.so* && echo "verify ok: libnftables (nft) has fullcone" || echo "VERIFY FAILED: libnftables fullcone"
           ls openwrt/bin/targets/mediatek/filogic/packages/kmod-nft-fullcone-*.apk >/dev/null 2>&1 && echo "verify ok: kmod-nft-fullcone package built" || echo "VERIFY FAILED: kmod-nft-fullcone package"
           [ -f "$R/usr/libexec/sftp-server" ] && echo "verify ok: sftp-server in image" || echo "VERIFY FAILED: sftp-server"
+          KC="$(ls openwrt/build_dir/target-*/linux-mediatek_filogic/linux-*/.config 2>/dev/null | head -1)"
+          echo "kernel config: $KC"
+          grep -q '^CONFIG_NF_CONNTRACK_CHAIN_EVENTS=y' "$KC" && echo "verify ok: kernel has NF_CONNTRACK_CHAIN_EVENTS" || echo "VERIFY FAILED: kernel NF_CONNTRACK_CHAIN_EVENTS"
+          grep -q '^CONFIG_NF_CONNTRACK_EVENTS=y' "$KC" && echo "verify ok: kernel has NF_CONNTRACK_EVENTS" || echo "VERIFY FAILED: kernel NF_CONNTRACK_EVENTS"
+          [ -f "$R/usr/bin/nohup" ] && echo "verify ok: nohup in image" || echo "VERIFY FAILED: nohup"
+          ls "$R"/lib/modules/*/nft_fullcone.ko "$R"/lib/modules/*/tun.ko >/dev/null 2>&1 && echo "verify ok: nft_fullcone and tun modules in image" || echo "VERIFY FAILED: kernel modules in image"
 
       - name: Collect artifacts
         if: ${{ !inputs.config_only }}
