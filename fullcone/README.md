@@ -21,3 +21,9 @@ If the kernel module cannot be loaded, firewall4 disables full-cone automaticall
 Licenses: the patches follow the licenses of the projects they modify (libnftnl and nftables: GPL-2.0-or-later;
 firewall4: ISC; nft-fullcone: GPL-2.0-only). Original authors: Chion Tang, llccd, Syrone Wong (nft-fullcone);
 the ImmortalWrt contributors (patches).
+
+## Kernel patch (`kernel/`)
+`kernel/952-net-conntrack-events-support-multiple-registrant.patch` (ImmortalWrt openwrt-25.12 `target/linux/generic/hack-6.12/`, unmodified)
+adds the optional `CONFIG_NF_CONNTRACK_CHAIN_EVENTS`, which `kmod-nft-fullcone` selects. Without it, official kernel 6.12 has a single conntrack-event
+notifier slot: `nft_fullcone` takes it, and a later `nf_conntrack_netlink` (pulled in by e.g. `dnsmasq-full`) overwrites it with a kernel WARNING,
+so full-cone loses its connection-destroy events. The workflow dry-runs this patch against the exact kernel source before building.
