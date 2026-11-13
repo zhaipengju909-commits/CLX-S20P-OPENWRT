@@ -1,7 +1,22 @@
-diff -urN a/include/linux/netfilter/nf_tables.h b/include/linux/netfilter/nf_tables.h
---- a/include/linux/netfilter/nf_tables.h	2025-12-05 20:17:57.635743839 +0800
-+++ b/include/linux/netfilter/nf_tables.h	2026-11-13 15:28:27.236156390 +0800
-@@ -1500,6 +1500,22 @@
+From 58c89e8768711a959fdc6e953df3ea2254ff93c1 Mon Sep 17 00:00:00 2001
+From: Syrone Wong <wong.syrone@gmail.com>
+Date: Sat, 9 Apr 2022 00:38:51 +0800
+Subject: [PATCH] nftables: add fullcone expression support
+
+Signed-off-by: Syrone Wong <wong.syrone@gmail.com>
+---
+ include/linux/netfilter/nf_tables.h | 16 ++++++++++
+ include/statement.h                 |  1 +
+ src/netlink_delinearize.c           | 48 +++++++++++++++++++++++++++++
+ src/netlink_linearize.c             |  7 +++++
+ src/parser_bison.y                  | 28 +++++++++++++++--
+ src/scanner.l                       |  1 +
+ src/statement.c                     |  1 +
+ 7 files changed, 100 insertions(+), 2 deletions(-)
+
+--- a/include/linux/netfilter/nf_tables.h
++++ b/include/linux/netfilter/nf_tables.h
+@@ -1500,6 +1500,22 @@ enum nft_masq_attributes {
  #define NFTA_MASQ_MAX		(__NFTA_MASQ_MAX - 1)
  
  /**
@@ -24,10 +39,9 @@ diff -urN a/include/linux/netfilter/nf_tables.h b/include/linux/netfilter/nf_tab
   * enum nft_redir_attributes - nf_tables redirect expression netlink attributes
   *
   * @NFTA_REDIR_REG_PROTO_MIN: source register of proto range start (NLA_U32: nft_registers)
-diff -urN a/include/statement.h b/include/statement.h
---- a/include/statement.h	2025-12-05 20:17:57.635743839 +0800
-+++ b/include/statement.h	2026-11-13 15:28:27.236357817 +0800
-@@ -129,6 +129,7 @@
+--- a/include/statement.h
++++ b/include/statement.h
+@@ -129,6 +129,7 @@ enum nft_nat_etypes {
  	__NFT_NAT_SNAT = NFT_NAT_SNAT,
  	__NFT_NAT_DNAT = NFT_NAT_DNAT,
  	NFT_NAT_MASQ,
@@ -35,10 +49,9 @@ diff -urN a/include/statement.h b/include/statement.h
  	NFT_NAT_REDIR,
  };
  
-diff -urN a/src/netlink_delinearize.c b/src/netlink_delinearize.c
---- a/src/netlink_delinearize.c	2025-12-05 20:17:57.643743889 +0800
-+++ b/src/netlink_delinearize.c	2026-11-13 15:28:27.236492023 +0800
-@@ -1521,6 +1521,53 @@
+--- a/src/netlink_delinearize.c
++++ b/src/netlink_delinearize.c
+@@ -1521,6 +1521,53 @@ out_err:
  	stmt_free(stmt);
  }
  
@@ -92,7 +105,7 @@ diff -urN a/src/netlink_delinearize.c b/src/netlink_delinearize.c
  static void netlink_parse_redir(struct netlink_parse_ctx *ctx,
  				const struct location *loc,
  				const struct nftnl_expr *nle)
-@@ -1952,6 +1999,7 @@
+@@ -1952,6 +1999,7 @@ static const struct expr_handler netlink
  	{ .name = "tproxy",	.parse = netlink_parse_tproxy },
  	{ .name = "notrack",	.parse = netlink_parse_notrack },
  	{ .name = "masq",	.parse = netlink_parse_masq },
@@ -100,10 +113,9 @@ diff -urN a/src/netlink_delinearize.c b/src/netlink_delinearize.c
  	{ .name = "redir",	.parse = netlink_parse_redir },
  	{ .name = "dup",	.parse = netlink_parse_dup },
  	{ .name = "queue",	.parse = netlink_parse_queue },
-diff -urN a/src/netlink_linearize.c b/src/netlink_linearize.c
---- a/src/netlink_linearize.c	2025-12-05 20:17:57.643743889 +0800
-+++ b/src/netlink_linearize.c	2026-11-13 15:28:27.236999521 +0800
-@@ -1266,6 +1266,13 @@
+--- a/src/netlink_linearize.c
++++ b/src/netlink_linearize.c
+@@ -1266,6 +1266,13 @@ static void netlink_gen_nat_stmt(struct
  		nftnl_reg_pmin = NFTNL_EXPR_MASQ_REG_PROTO_MIN;
  		nftnl_reg_pmax = NFTNL_EXPR_MASQ_REG_PROTO_MAX;
  		break;
@@ -117,10 +129,9 @@ diff -urN a/src/netlink_linearize.c b/src/netlink_linearize.c
  	case NFT_NAT_REDIR:
  		nle = alloc_nft_expr("redir");
  
-diff -urN a/src/parser_bison.y b/src/parser_bison.y
---- a/src/parser_bison.y	2025-12-05 20:17:57.643743889 +0800
-+++ b/src/parser_bison.y	2026-11-13 15:28:27.237250721 +0800
-@@ -668,6 +668,7 @@
+--- a/src/parser_bison.y
++++ b/src/parser_bison.y
+@@ -668,6 +668,7 @@ int nft_lex(void *, void *, void *);
  %token SNAT			"snat"
  %token DNAT			"dnat"
  %token MASQUERADE		"masquerade"
@@ -128,7 +139,7 @@ diff -urN a/src/parser_bison.y b/src/parser_bison.y
  %token REDIRECT			"redirect"
  %token RANDOM			"random"
  %token FULLY_RANDOM		"fully-random"
-@@ -814,8 +815,8 @@
+@@ -814,8 +815,8 @@ int nft_lex(void *, void *, void *);
  %type <val>			limit_burst_pkts limit_burst_bytes limit_mode limit_bytes time_unit quota_mode
  %type <stmt>			reject_stmt reject_stmt_alloc
  %destructor { stmt_free($$); }	reject_stmt reject_stmt_alloc
@@ -139,7 +150,7 @@ diff -urN a/src/parser_bison.y b/src/parser_bison.y
  %type <val>			nf_nat_flags nf_nat_flag offset_opt
  %type <stmt>			tproxy_stmt
  %destructor { stmt_free($$); }	tproxy_stmt
-@@ -3274,6 +3275,7 @@
+@@ -3274,6 +3275,7 @@ stmt			:	verdict_stmt
  			|	queue_stmt
  			|	ct_stmt
  			|	masq_stmt	close_scope_nat
@@ -147,7 +158,7 @@ diff -urN a/src/parser_bison.y b/src/parser_bison.y
  			|	redir_stmt	close_scope_nat
  			|	dup_stmt	close_scope_dup
  			|	fwd_stmt	close_scope_fwd
-@@ -4105,6 +4107,28 @@
+@@ -4105,6 +4107,28 @@ masq_stmt_args		:	TO 	COLON	stmt_expr
  			{
  				$<stmt>0->nat.proto = $3;
  			}
@@ -176,10 +187,9 @@ diff -urN a/src/parser_bison.y b/src/parser_bison.y
  			|	TO 	COLON	stmt_expr	nf_nat_flags
  			{
  				$<stmt>0->nat.proto = $3;
-diff -urN a/src/scanner.l b/src/scanner.l
---- a/src/scanner.l	2025-12-05 20:17:57.643743889 +0800
-+++ b/src/scanner.l	2026-11-13 15:28:27.240468069 +0800
-@@ -470,6 +470,7 @@
+--- a/src/scanner.l
++++ b/src/scanner.l
+@@ -470,6 +470,7 @@ addrstring	({macaddr}|{ip4addr}|{ip6addr
  "snat"			{ scanner_push_start_cond(yyscanner, SCANSTATE_STMT_NAT); return SNAT; }
  "dnat"			{ scanner_push_start_cond(yyscanner, SCANSTATE_STMT_NAT); return DNAT; }
  "masquerade"		{ scanner_push_start_cond(yyscanner, SCANSTATE_STMT_NAT); return MASQUERADE; }
@@ -187,10 +197,9 @@ diff -urN a/src/scanner.l b/src/scanner.l
  "redirect"		{ scanner_push_start_cond(yyscanner, SCANSTATE_STMT_NAT); return REDIRECT; }
  "random"		{ return RANDOM; }
  <SCANSTATE_STMT_NAT>{
-diff -urN a/src/statement.c b/src/statement.c
---- a/src/statement.c	2025-12-05 20:17:57.643743889 +0800
-+++ b/src/statement.c	2026-11-13 15:28:27.238163946 +0800
-@@ -681,6 +681,7 @@
+--- a/src/statement.c
++++ b/src/statement.c
+@@ -681,6 +681,7 @@ const char *nat_etype2str(enum nft_nat_e
  		[NFT_NAT_SNAT]	= "snat",
  		[NFT_NAT_DNAT]	= "dnat",
  		[NFT_NAT_MASQ]	= "masquerade",
