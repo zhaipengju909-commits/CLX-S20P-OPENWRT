@@ -15,7 +15,7 @@ upstream versions as official openwrt-25.12 (kernel 6.12, libnftnl 1.3.1, nftabl
 The workflow dry-runs all patches against the exact upstream sources before building, so a version drift in
 openwrt-25.12 stops the build early instead of producing a broken firewall.
 
-Full-cone NAT is **off by default** (`option fullcone '0'`). Enable it with `option fullcone '1'` in the firewall `defaults` section.
+The ImmortalWrt firewall4 patch changes the default `/etc/config/firewall` (`defaults` section) to: `flow_offloading 1`, `flow_offloading_hw 1`, `fullcone 1`, `fullcone6 0` (official firewall4 has none of these). So **full-cone NAT and flow offloading (software and hardware) are ON by default**; set the option to `0` to turn each off.
 If the kernel module cannot be loaded, firewall4 disables full-cone automatically (it logs a warning) and keeps working.
 
 Licenses: the patches follow the licenses of the projects they modify (libnftnl and nftables: GPL-2.0-or-later;
