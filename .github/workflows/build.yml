@@ -316,10 +316,10 @@ jobs:
           CONFIG_PACKAGE_kmod-nft-fullcone=y
           CONFIG_PACKAGE_openssh-sftp-server=y
 
-          # Small kernel modules that proxy plugins (PassWall2 / OpenClash) need. Official package feeds do not carry kmods for
-          # our kernel hash, so put them in the image. (kmod-nf-conntrack-netlink is deliberately NOT here yet: it must be checked
-          # on the device together with the conntrack-events kernel patch before it is allowed to load at boot.)
+          # Kernel modules that proxy plugins (PassWall2 / OpenClash) and dnsmasq-full need. Official package feeds do not carry
+          # kmods for our kernel hash, so put them in the image; the userspace packages can then be installed from official feeds.
           CONFIG_PACKAGE_kmod-tun=y
+          CONFIG_PACKAGE_kmod-nf-conntrack-netlink=y
           CONFIG_PACKAGE_kmod-inet-diag=y
           CONFIG_PACKAGE_kmod-netlink-diag=y
           CONFIG_PACKAGE_kmod-nft-tproxy=y
@@ -341,7 +341,7 @@ jobs:
           chk '^CONFIG_PACKAGE_luci=y'
           [ "$fail" = 0 ] || exit 1
           # Third-party plugins are best effort: report what was dropped, but do not fail the build
-          for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-aurora luci-app-aurora-config luci-app-ttyd luci-app-samba4 luci-compat kmod-nft-fullcone openssh-sftp-server kmod-tun kmod-inet-diag kmod-netlink-diag kmod-nft-tproxy coreutils-nohup; do
+          for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-aurora luci-app-aurora-config luci-app-ttyd luci-app-samba4 luci-compat kmod-nft-fullcone openssh-sftp-server kmod-tun kmod-nf-conntrack-netlink kmod-inet-diag kmod-netlink-diag kmod-nft-tproxy coreutils-nohup; do
             if grep -q "^CONFIG_PACKAGE_$p=y" .config; then echo "plugin ok: $p"; else echo "PLUGIN DROPPED: $p"; fi
           done
           for p in luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-upnp-zh-cn luci-i18n-samba4-zh-cn; do
@@ -382,7 +382,7 @@ jobs:
           grep -q '^CONFIG_NF_CONNTRACK_CHAIN_EVENTS=y' "$KC" && echo "verify ok: kernel has NF_CONNTRACK_CHAIN_EVENTS" || echo "VERIFY FAILED: kernel NF_CONNTRACK_CHAIN_EVENTS"
           grep -q '^CONFIG_NF_CONNTRACK_EVENTS=y' "$KC" && echo "verify ok: kernel has NF_CONNTRACK_EVENTS" || echo "VERIFY FAILED: kernel NF_CONNTRACK_EVENTS"
           [ -f "$R/usr/bin/nohup" ] && echo "verify ok: nohup in image" || echo "VERIFY FAILED: nohup"
-          ls "$R"/lib/modules/*/nft_fullcone.ko "$R"/lib/modules/*/tun.ko >/dev/null 2>&1 && echo "verify ok: nft_fullcone and tun modules in image" || echo "VERIFY FAILED: kernel modules in image"
+          ls "$R"/lib/modules/*/nft_fullcone.ko "$R"/lib/modules/*/nf_conntrack_netlink.ko "$R"/lib/modules/*/tun.ko >/dev/null 2>&1 && echo "verify ok: nft_fullcone, nf_conntrack_netlink, tun modules in image" || echo "VERIFY FAILED: kernel modules in image"
 
       - name: Collect artifacts
         if: ${{ !inputs.config_only }}
