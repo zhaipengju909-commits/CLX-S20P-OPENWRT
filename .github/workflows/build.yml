@@ -287,20 +287,30 @@ jobs:
       - name: Collect artifacts
         if: ${{ !inputs.config_only }}
         run: |
+          set -euo pipefail
+          VER="${BRANCH#openwrt-}"
+          BUILD="b${{ github.run_number }}"
+          UP="$(git -C openwrt rev-parse --short=7 HEAD)"
+          DATE="$(date -u +%Y%m%d)"
+          NAME="CLX-S20P-OpenWrt-${VER}-${BUILD}-${DATE}-${UP}"
+          echo "NAME=$NAME" >> "$GITHUB_ENV"
+          echo "BUILD=$BUILD" >> "$GITHUB_ENV"
+          echo "UP=$UP" >> "$GITHUB_ENV"
           mkdir -p out
           T=openwrt/bin/targets/mediatek/filogic
-          cp "$T"/*clx_s20p*sysupgrade.bin out/
-          cp "$T"/*clx_s20p*.manifest out/ 2>/dev/null || true
-          cp "$T"/sha256sums out/ 2>/dev/null || true
+          cp "$T"/*clx_s20p*sysupgrade.bin "out/${NAME}-sysupgrade.bin"
+          cp "$T"/*clx_s20p*.manifest "out/${NAME}.manifest"
           cp upstream-commit.txt out/
-          cp openwrt/.config out/build.config
-          tar -C "$T" -I 'zstd -T0 -10' -cf out/kmod-and-packages.tar.zst packages
+          cp openwrt/.config "out/${NAME}.config"
+          tar -C "$T" -I 'zstd -T0 -10' -cf "out/${NAME}-packages.tar.zst" packages
+          (cd out && sha256sum "${NAME}-sysupgrade.bin" > "${NAME}.sha256")
           ls -lh out
+          cat "out/${NAME}.sha256"
 
       - name: Publish release
         if: ${{ !inputs.config_only }}
         run: |
-          TAG="s20p-$(date -u +%Y%m%d-%H%M)"
+          TAG="$NAME"
           cat > notes.md <<NOTES
           ## CLX S20P - official OpenWrt (experimental)
 
@@ -308,6 +318,7 @@ jobs:
 
           **这是练手项目，尚未验证能否开机，也不保证所有功能正常。刷机可能导致设备无法启动，风险自负；请先备份并确认自己有恢复手段（U-Boot / 串口）。不提供任何担保。**
 
+          - Build / 构建号: $BUILD ($NAME)
           - Management address / 管理地址: http://192.168.2.1
           - Username / 用户名: root, Password / 密码: openwrt  (change it right after first login / 登录后请立即修改)
           - Board name / 机型标识: clx,s20p (CLX S20P, Super Gateway S20P hardware is the same / 超级网关 S20P 硬件相同)
@@ -320,5 +331,5 @@ jobs:
           NOTES
           sed -i 's/^          //' notes.md
           gh release create "$TAG" out/* --target "${{ github.sha }}" \
-            --title "CLX S20P official OpenWrt $TAG (experimental, untested)" \
+            --title "CLX S20P OpenWrt ${BRANCH#openwrt-} $BUILD (experimental, untested)" \
             --notes-file notes.md
