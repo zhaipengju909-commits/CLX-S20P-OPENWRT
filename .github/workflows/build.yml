@@ -198,6 +198,7 @@ jobs:
           CONFIG_PACKAGE_luci=y
           CONFIG_PACKAGE_luci-ssl=y
           CONFIG_PACKAGE_luci-theme-bootstrap=y
+          CONFIG_LUCI_LANG_zh_Hans=y
           CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
           CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y
           CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y
@@ -210,14 +211,12 @@ jobs:
           CONFIG_PACKAGE_luci-proto-wireguard=y
 
           # Extra official apps
+          # Needed by third-party Lua LuCI apps (e.g. homebox from iStore: module 'luci.cbi' not found)
+          CONFIG_PACKAGE_luci-compat=y
           CONFIG_PACKAGE_luci-app-ttyd=y
           CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
           CONFIG_PACKAGE_luci-app-samba4=y
           CONFIG_PACKAGE_luci-i18n-samba4-zh-cn=y
-          CONFIG_PACKAGE_luci-app-wol=y
-          CONFIG_PACKAGE_luci-i18n-wol-zh-cn=y
-          CONFIG_PACKAGE_luci-app-sqm=y
-          CONFIG_PACKAGE_luci-i18n-sqm-zh-cn=y
 
           # Third-party apps kept per user choice (sources cloned into package/extra)
           CONFIG_PACKAGE_xz-utils=y
@@ -256,8 +255,11 @@ jobs:
           chk '^CONFIG_PACKAGE_luci=y'
           [ "$fail" = 0 ] || exit 1
           # Third-party plugins are best effort: report what was dropped, but do not fail the build
-          for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-aurora luci-app-aurora-config luci-app-ttyd luci-app-samba4 luci-app-wol luci-app-sqm; do
+          for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-aurora luci-app-aurora-config luci-app-ttyd luci-app-samba4 luci-compat; do
             if grep -q "^CONFIG_PACKAGE_$p=y" .config; then echo "plugin ok: $p"; else echo "PLUGIN DROPPED: $p"; fi
+          done
+          for p in luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-upnp-zh-cn luci-i18n-samba4-zh-cn; do
+            if grep -q "^CONFIG_PACKAGE_$p=y" .config; then echo "langpack ok: $p"; else echo "LANGPACK DROPPED: $p"; fi
           done
           echo '--- luci-app-store config entry ---'; grep -n -A12 'config PACKAGE_luci-app-store$' tmp/.config-package.in | head -30 || true
           grep -n -A12 '^Package: luci-app-store$' tmp/.packageinfo | head -20 || true
@@ -336,7 +338,7 @@ jobs:
           - Board name / 机型标识: clx,s20p (CLX S20P, Super Gateway S20P hardware is the same / 超级网关 S20P 硬件相同)
           - Base / 基础: official openwrt/openwrt branch $BRANCH, upstream commit $(cat upstream-commit.txt)
           - Device tree derived from VIKINGYFY/immortalwrt (GPL-2.0-or-later OR MIT)
-          - Extra packages / 额外插件: iStore store, quickstart, aurora theme, mini-diskmanager, ttyd, samba4, sqm, wol; all kernel modules are built as packages
+          - Extra packages / 额外插件: iStore store, quickstart, aurora theme, mini-diskmanager, ttyd, samba4, luci-compat; all kernel modules are built as packages
           - Flash with sysupgrade WITHOUT keeping settings / 刷机时不要勾选"保留配置"
           - Not affiliated with OpenWrt, CLX, Super Gateway or any plugin author. Not an official release.
           - See the repository README for details / 详见仓库 README
