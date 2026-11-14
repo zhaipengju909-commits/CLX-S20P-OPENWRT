@@ -14,7 +14,7 @@
 2. **只在 1 台真机上验证过**(详见第四节)：其他机器、其他刷机来源、长时间稳定性都没有验证。
 3. **刷机可能导致设备无法启动。** 刷之前请自己备份，并确认自己有办法恢复（U-Boot 网页恢复或串口）。没有恢复手段的话，请不要刷。
 4. **不提供任何担保，也不提供售后和技术支持。** 因使用本项目造成的设备损坏、数据丢失、网络中断或其他损失，由使用者自己承担。
-5. **请勿用于商业用途或转卖。** 固件中包含 GPL 等开源许可的软件，分发和使用需要遵守各自的许可证（见第六节）。
+5. **请勿将本项目作为商业产品转售。** 固件中包含 GPL 等开源许可的软件，分发和使用须遵守各自许可证（见第六节）；本声明不限制这些许可证已授予的权利。
 6. **版权方或插件作者如果希望修改署名、说明，或者下架相关内容，请在 Issues 里留言，我会尽快处理。**
 7. 默认密码是公开的（见第二节），**上线前务必修改**，否则别人在局域网内就能登录你的路由器。
 
@@ -41,7 +41,7 @@
 - **额外插件**（官方源）：ttyd 终端、samba4 共享、upnp、ddns、wireguard、`luci-compat`（兼容旧版 Lua LuCI 应用）。wol 与 sqm 已从镜像移除。
 - **额外插件**（第三方源，编译时现拉）：iStore 商店（luci-app-store）、quickstart 首页、aurora 主题、mini-diskmanager 磁盘管理。
 - **没有预装代理类插件**（openclash、passwall 等），等能开机了再自己装。
-- **全锥型 NAT**：官方 OpenWrt 主线不含 fullcone，本项目通过 `kmod-nft-fullcone` + firewall4 补丁提供 IPv4 全锥形（`luci-app-fullcone` 可管理）。镜像默认不开，刷机后由恢复脚本设 `firewall.@defaults[0].fullcone=1`、`fullcone6=0`。b18 实测：同一本地端口对多家 STUN 服务器映射一致，换 IP + 换端口的回包可进入内网。
+- **全锥型 NAT**：官方 OpenWrt 主线不含 fullcone，本项目通过 `kmod-nft-fullcone` + firewall4 补丁提供 IPv4 全锥形（`luci-app-fullcone` 可管理）。由于补丁会改写 firewall4 的出厂默认配置，**镜像中 `fullcone=1`、`fullcone6=0`、`flow_offloading=1`、`flow_offloading_hw=1` 默认即为开启**（已在 b18 解包镜像的 `/etc/config/firewall` 中核实）；恢复脚本会再次显式设置以确保一致，如需关闭请把对应项设为 `0`。b18 实测：同一本地端口对多家 STUN 服务器映射一致，换 IP + 换端口的回包可进入内网。
 - **没有的东西**：联发科 SDK 专用的 turboacc-mtk、eqos-mtk、mtwifi-cfg 不能用在官方内核上；硬件加速改用官方主线自带的"硬件流量卸载"（b18 实测 PPE 流表绑定生效、CPU 占用低），无线走官方 mt76 驱动。
 
 ---
@@ -111,6 +111,8 @@
 | quickstart、luci-app-quickstart | [kenzok8/small-package](https://github.com/kenzok8/small-package) | 见其仓库及各包 Makefile（quickstart 的二进制是编译时从 linkease 的预编译发布页下载的） |
 
 其余软件包来自 OpenWrt 官方软件源，许可证各不相同。
+
+**本仓库自身的许可证**：本仓库的构建脚本、工作流与文档采用 **GPL-2.0-only**，全文见仓库根目录 `LICENSE`（与 OpenWrt 上游一致）。`fullcone/` 下的补丁沿用其所修改项目的许可证（libnftnl / nftables：GPL-2.0-or-later；firewall4：ISC；nft-fullcone：GPL-2.0-only；内核补丁沿用内核许可），详见 `fullcone/README.md`。
 
 **关于 GPL：** Release 里发布的固件包含 GPL 软件。对应的源码是：官方 OpenWrt 的指定提交（Release 里的 `upstream-commit.txt`）、本仓库的构建脚本，以及构建脚本里克隆的上述第三方仓库。以上只是说明，不是法律意见；如果要分发或商用，请自行核对各许可证的要求。
 
