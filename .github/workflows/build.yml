@@ -499,6 +499,15 @@ jobs:
           path: ram/*
           retention-days: 14
 
+      - name: Upload release payload (workflow artifact, survives a failed publish)
+        if: ${{ !inputs.config_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ env.NAME }}
+          path: out/*
+          retention-days: 14
+          if-no-files-found: error
+
       - name: Publish release
         if: ${{ !inputs.config_only }}
         run: |
@@ -526,6 +535,13 @@ jobs:
           - See the repository README for details / 详见仓库 README
           NOTES
           sed -i 's/^          //' notes.md
-          gh release create "$TAG" out/* --target "${{ github.sha }}" \
-            --title "CLX S20P OpenWrt ${BRANCH#openwrt-} $BUILD (experimental, untested)" \
-            --notes-file notes.md
+          # A previous run built everything and then got HTTP 403 here (cause not established); retry, and the files are
+          # also kept as a workflow artifact by the previous step, so a failed publish does not lose the firmware.
+          ok=0
+          for i in 1 2 3; do
+            if gh release create "$TAG" out/* --target "${{ github.sha }}" \
+                 --title "CLX S20P OpenWrt ${BRANCH#openwrt-} $BUILD (experimental, untested)" \
+                 --notes-file notes.md; then ok=1; break; fi
+            echo "release create failed (attempt $i/3); retrying in 30 s"; sleep 30
+          done
+          [ "$ok" = 1 ] || { echo "RELEASE NOT PUBLISHED: the firmware is in the workflow artifact firmware-$NAME"; exit 1; }
