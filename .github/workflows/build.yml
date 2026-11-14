@@ -46,6 +46,16 @@ jobs:
           git clone --depth 1 --branch "$BRANCH" https://github.com/openwrt/openwrt.git openwrt
           git -C openwrt log -1 --format='%H %ad %s' | tee upstream-commit.txt
 
+      - name: Cache OpenWrt downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            openwrt/dl
+          key: ${{ runner.os }}-openwrt-dl-${{ inputs.branch }}-${{ hashFiles('openwrt/feeds.conf.default') }}
+          restore-keys: |
+            ${{ runner.os }}-openwrt-dl-${{ inputs.branch }}-
+            ${{ runner.os }}-openwrt-dl-
+
       - name: Add S20P support
         run: |
           set -euo pipefail
@@ -138,6 +148,50 @@ jobs:
           open(p, "w").write("\n".join(out) + "\n")
           PY2
           grep '^root:' package/base-files/files/etc/shadow | cut -c1-20
+          # Build identifier so /etc/s20p-build tells which image is running
+          mkdir -p files/etc
+          printf 'S20P build: b%s / %s / workflow run %s\n' \
+            "$GITHUB_RUN_NUMBER" "$BRANCH" "$GITHUB_RUN_ID" > files/etc/s20p-build
+          cat files/etc/s20p-build
+
+      - name: First-boot defaults (CGNAT UPnP fix, official firewall defaults)
+        working-directory: openwrt
+        run: |
+          set -euo pipefail
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/99-upnpd-cgnat <<'EOS'
+          #!/bin/sh
+          # Official miniupnpd init script ignores the UCI option
+          # ext_allow_private_ipv4. With a CGNAT WAN (100.64.0.0/10) miniupnpd
+          # then logs "Port forwarding is impossible" and rejects every
+          # AddPortMapping / NAT-PMP request. Patch it once at first boot.
+          INIT=/etc/init.d/miniupnpd
+          [ -x "$INIT" ] || exit 0
+          grep -q 'ext_allow_private_ipv4=yes' "$INIT" && exit 0
+          cp "$INIT" "${INIT}.bak-natfix" 2>/dev/null || true
+          awk '{
+            print
+            if ($0 ~ /config_get ipv6_disable config ipv6_disable/) print "\tconfig_get_bool allow_private_ipv4 config ext_allow_private_ipv4 0"
+            if ($0 ~ /upnpd_write_bool ipv6_disable/) print "\t[ \"$allow_private_ipv4\" -eq 0 ] || echo \"ext_allow_private_ipv4=yes\""
+          }' "$INIT" > "${INIT}.new" && mv "${INIT}.new" "$INIT" && chmod +x "$INIT"
+          uci set upnpd.config.ext_allow_private_ipv4='1'
+          uci commit upnpd
+          /etc/init.d/miniupnpd restart >/dev/null 2>&1 || true
+          EOS
+          chmod +x files/etc/uci-defaults/99-upnpd-cgnat
+          cat > files/etc/uci-defaults/98-firewall-defaults <<'EOS2'
+          #!/bin/sh
+          # The ImmortalWrt firewall4 patch enables fullcone and both flow
+          # offloading modes out of the box. Keep official-style defaults:
+          # reset them at first boot; the provisioning script can re-enable.
+          uci set firewall.@defaults[0].fullcone='0'
+          uci set firewall.@defaults[0].fullcone6='0'
+          uci set firewall.@defaults[0].flow_offloading='0'
+          uci set firewall.@defaults[0].flow_offloading_hw='0'
+          uci commit firewall
+          EOS2
+          chmod +x files/etc/uci-defaults/98-firewall-defaults
+          ls -l files/etc/uci-defaults/
 
       - name: Add full-cone NAT (nftables fullcone, patches adapted from ImmortalWrt)
         working-directory: openwrt
@@ -312,7 +366,7 @@ jobs:
           CONFIG_PACKAGE_iperf3=y
           CONFIG_PACKAGE_irqbalance=y
 
-          # Full-cone NAT kernel module (patches in fullcone/, off by default) and SFTP server (so scp works with dropbear)
+          # Full-cone NAT kernel module (patches in fullcone/; uci-defaults resets it to 0) and SFTP server (so scp works with dropbear)
           CONFIG_PACKAGE_kmod-nft-fullcone=y
           CONFIG_PACKAGE_openssh-sftp-server=y
 
@@ -325,6 +379,8 @@ jobs:
           CONFIG_PACKAGE_kmod-nft-tproxy=y
           # busybox has no nohup
           CONFIG_PACKAGE_coreutils-nohup=y
+          # conntrack CLI for NAT / flow diagnostics (pure userspace tool)
+          CONFIG_PACKAGE_conntrack-tools=y
           CFG
           set +e
           make defconfig > /tmp/defconfig.log 2>&1
@@ -339,7 +395,13 @@ jobs:
           chk '^CONFIG_TARGET_mediatek_filogic_DEVICE_clx_s20p=y'
           chk '^CONFIG_ALL_KMODS=y'
           chk '^CONFIG_PACKAGE_luci=y'
+          chk '^CONFIG_PACKAGE_conntrack-tools=y'
           [ "$fail" = 0 ] || exit 1
+          # Report leftover patch rejects; do not fail the build yet
+          if find . -name '*.rej' -print -quit | grep -q .; then
+            echo 'PATCH REJECT DETECTED'
+            find . -name '*.rej' | head -20
+          fi
           # Third-party plugins are best effort: report what was dropped, but do not fail the build
           for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-aurora luci-app-aurora-config luci-app-ttyd luci-app-samba4 luci-compat kmod-nft-fullcone openssh-sftp-server kmod-tun kmod-nf-conntrack-netlink kmod-inet-diag kmod-netlink-diag kmod-nft-tproxy coreutils-nohup; do
             if grep -q "^CONFIG_PACKAGE_$p=y" .config; then echo "plugin ok: $p"; else echo "PLUGIN DROPPED: $p"; fi
@@ -436,8 +498,8 @@ jobs:
           - Board name / 机型标识: clx,s20p (CLX S20P, Super Gateway S20P hardware is the same / 超级网关 S20P 硬件相同)
           - Base / 基础: official openwrt/openwrt branch $BRANCH, upstream commit $(cat upstream-commit.txt)
           - Device tree derived from VIKINGYFY/immortalwrt (GPL-2.0-or-later OR MIT)
-          - Extra packages / 额外插件: iStore store, quickstart, aurora theme, mini-diskmanager, ttyd, samba4, luci-compat, openssh-sftp-server; all kernel modules are built as packages
-          - Full-cone NAT (nftables, not in official OpenWrt; patches in fullcone/) is available but OFF by default: set option fullcone '1' in the firewall defaults / 全锥型 NAT 默认关闭，需要在防火墙 defaults 里设置 option fullcone '1'
+          - Extra packages / 额外插件: iStore store, quickstart, aurora theme, mini-diskmanager, ttyd, samba4, luci-compat, openssh-sftp-server, conntrack-tools; all kernel modules are built as packages
+          - Full-cone NAT / flow offloading: the firewall4 patch enables them, but this build resets fullcone, flow_offloading and flow_offloading_hw to '0' at first boot; set to '1' in firewall defaults to enable / 全锥型 NAT 与流量卸载在本构建中出厂默认关闭，需要时在防火墙 defaults 里设为 '1'
           - Flash with sysupgrade WITHOUT keeping settings / 刷机时不要勾选"保留配置"
           - Not affiliated with OpenWrt, CLX, Super Gateway or any plugin author. Not an official release.
           - See the repository README for details / 详见仓库 README
