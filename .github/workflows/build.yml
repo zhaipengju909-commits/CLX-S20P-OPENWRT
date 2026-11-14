@@ -379,8 +379,8 @@ jobs:
           CONFIG_PACKAGE_kmod-nft-tproxy=y
           # busybox has no nohup
           CONFIG_PACKAGE_coreutils-nohup=y
-          # conntrack CLI for NAT / flow diagnostics (pure userspace tool)
-          CONFIG_PACKAGE_conntrack-tools=y
+          # conntrack CLI (source package conntrack-tools defines Package/conntrack)
+          CONFIG_PACKAGE_conntrack=y
           CFG
           set +e
           make defconfig > /tmp/defconfig.log 2>&1
@@ -395,7 +395,7 @@ jobs:
           chk '^CONFIG_TARGET_mediatek_filogic_DEVICE_clx_s20p=y'
           chk '^CONFIG_ALL_KMODS=y'
           chk '^CONFIG_PACKAGE_luci=y'
-          chk '^CONFIG_PACKAGE_conntrack-tools=y'
+          chk '^CONFIG_PACKAGE_conntrack=y'
           [ "$fail" = 0 ] || exit 1
           # Report leftover patch rejects; do not fail the build yet
           if find . -name '*.rej' -print -quit | grep -q .; then
@@ -498,7 +498,7 @@ jobs:
           - Board name / 机型标识: clx,s20p (CLX S20P, Super Gateway S20P hardware is the same / 超级网关 S20P 硬件相同)
           - Base / 基础: official openwrt/openwrt branch $BRANCH, upstream commit $(cat upstream-commit.txt)
           - Device tree derived from VIKINGYFY/immortalwrt (GPL-2.0-or-later OR MIT)
-          - Extra packages / 额外插件: iStore store, quickstart, aurora theme, mini-diskmanager, ttyd, samba4, luci-compat, openssh-sftp-server, conntrack-tools; all kernel modules are built as packages
+          - Extra packages / 额外插件: iStore store, quickstart, aurora theme, mini-diskmanager, ttyd, samba4, luci-compat, openssh-sftp-server, conntrack (conntrack-tools CLI); all kernel modules are built as packages
           - Full-cone NAT / flow offloading: the firewall4 patch enables them, but this build resets fullcone, flow_offloading and flow_offloading_hw to '0' at first boot; set to '1' in firewall defaults to enable / 全锥型 NAT 与流量卸载在本构建中出厂默认关闭，需要时在防火墙 defaults 里设为 '1'
           - Flash with sysupgrade WITHOUT keeping settings / 刷机时不要勾选"保留配置"
           - Not affiliated with OpenWrt, CLX, Super Gateway or any plugin author. Not an official release.
