@@ -1,6 +1,6 @@
 #!/bin/sh
 # CLX S20P: first-boot defaults. Runs once, then this file is removed (OpenWrt uci-defaults).
-# Settings are only written here when the image boots for the first time without kept settings.
+# Runs on the first boot after a flash (also when settings are kept; every step below is safe to repeat).
 . /lib/functions.sh
 
 # 1) Data partition p7 -> /mnt/data.
@@ -28,17 +28,38 @@ if [ -b /dev/mmcblk0p7 ] && [ -n "$(blkid -s TYPE -o value /dev/mmcblk0p7 2>/dev
 	uci commit fstab
 fi
 
-# 2) Firewall defaults: hardware flow offloading on, full-cone NAT (IPv4) on.
-#    In firewall4 flow_offloading_hw only takes effect together with flow_offloading (it falls back to software
-#    offloading if the hardware path is unavailable), so both are 1.
-uci -q set firewall.@defaults[0].flow_offloading='1'
-uci -q set firewall.@defaults[0].flow_offloading_hw='1'
-uci -q set firewall.@defaults[0].fullcone='1'
-uci -q set firewall.@defaults[0].fullcone6='0'
-uci -q commit firewall
+# 2) Flow offloading, full-cone NAT and BBR are NOT written here any more: luci-app-turboacc owns them
+#    (Network -> Turbo ACC Center). Its shipped /etc/config/turboacc turns software + hardware offloading, IPv4
+#    full-cone and BBR on and IPv6 full-cone off, and its init script applies them to /etc/config/firewall at every boot.
+#    Writing the same options from two places would make them fight, so only the service is enabled here.
+if [ -x /etc/init.d/turboacc ]; then
+	/etc/init.d/turboacc enable
+fi
 
 # 3) UPnP/NAT-PMP service on by default (stock default is off). secure_mode stays on.
 uci -q set upnpd.config.enabled='1'
 uci -q commit upnpd
+
+# 4) SSH (dropbear) listens on the LAN interface only (by interface name, so it follows a changed LAN address).
+#    Password login is left on: other people flashing this image have no key yet.
+uci -q set dropbear.@dropbear[0].Interface='lan'
+uci -q commit dropbear
+
+# 5) WAN side: drop the stock accept rules that serve no purpose on a router without a VPN server (ping, IPsec ESP,
+#    ISAKMP). The wan zone still rejects all other incoming traffic. DHCP renew, IGMP (IPTV), DHCPv6 and the ICMPv6
+#    rules IPv6 needs are kept, because turning them off can break a DHCP-WAN or IPTV setup.
+clx_off_wan_rule() {
+	local name
+	config_get name "$1" name
+	case "$name" in
+	Allow-Ping|Allow-IPSec-ESP|Allow-ISAKMP) uci -q set "firewall.$1.enabled=0" ;;
+	esac
+}
+config_load firewall
+config_foreach clx_off_wan_rule rule
+uci -q commit firewall
+
+# 6) iStore packages are built for architecture aarch64_generic; apk only accepts it if it is listed here.
+grep -qx aarch64_generic /etc/apk/arch 2>/dev/null || echo aarch64_generic >> /etc/apk/arch
 
 exit 0
