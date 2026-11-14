@@ -1,0 +1,44 @@
+#!/bin/sh
+# CLX S20P: first-boot defaults. Runs once, then this file is removed (OpenWrt uci-defaults).
+# Settings are only written here when the image boots for the first time without kept settings.
+. /lib/functions.sh
+
+# 1) Data partition p7 -> /mnt/data.
+#    Stock first boot detects p7 but leaves the entry DISABLED (enabled '0', target /mnt/mmcblk0p7), so the disk is
+#    never mounted, and mounting it by hand through a UI may offer to format it.
+#    The entry is matched by DEVICE (not UUID), so it keeps working after the partition is re-formatted.
+#    Nothing is ever formatted here: a partition without a filesystem is left alone.
+if [ -b /dev/mmcblk0p7 ] && [ -n "$(blkid -s TYPE -o value /dev/mmcblk0p7 2>/dev/null)" ]; then
+	[ -s /etc/config/fstab ] || block detect > /etc/config/fstab 2>/dev/null
+	P7_UUID="$(blkid -s UUID -o value /dev/mmcblk0p7 2>/dev/null)"
+	config_load fstab
+	clx_drop_p7() {
+		local dev uuid
+		config_get dev "$1" device
+		config_get uuid "$1" uuid
+		if [ "$(basename "${dev:-}")" = "mmcblk0p7" ] || { [ -n "$P7_UUID" ] && [ "$uuid" = "$P7_UUID" ]; }; then
+			uci -q delete "fstab.$1"
+		fi
+	}
+	config_foreach clx_drop_p7 mount
+	sec="$(uci add fstab mount)"
+	uci set "fstab.$sec.device=/dev/mmcblk0p7"
+	uci set "fstab.$sec.target=/mnt/data"
+	uci set "fstab.$sec.enabled=1"
+	uci commit fstab
+fi
+
+# 2) Firewall defaults: hardware flow offloading on, full-cone NAT (IPv4) on.
+#    In firewall4 flow_offloading_hw only takes effect together with flow_offloading (it falls back to software
+#    offloading if the hardware path is unavailable), so both are 1.
+uci -q set firewall.@defaults[0].flow_offloading='1'
+uci -q set firewall.@defaults[0].flow_offloading_hw='1'
+uci -q set firewall.@defaults[0].fullcone='1'
+uci -q set firewall.@defaults[0].fullcone6='0'
+uci -q commit firewall
+
+# 3) UPnP/NAT-PMP service on by default (stock default is off). secure_mode stays on.
+uci -q set upnpd.config.enabled='1'
+uci -q commit upnpd
+
+exit 0
