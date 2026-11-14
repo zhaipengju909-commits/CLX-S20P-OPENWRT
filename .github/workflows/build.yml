@@ -301,9 +301,38 @@ jobs:
           pin https://github.com/eamonxg/luci-theme-aurora.git 298dbcc74ddf820923a51285fb0826d429e5d7ca luci-theme-aurora
           pin https://github.com/eamonxg/luci-app-aurora-config.git a5299ce0144859f47683ec3bc40805bf616f534f luci-app-aurora-config
           rm -rf luci-theme-aurora/.git luci-app-aurora-config/.git
-          # FullCone NAT settings page (Network -> Firewall -> FullCone NAT). Official LuCI has no such switch.
-          # Source is vendored in this repo (package-extra/luci-app-fullcone, from akorshun/fullcone-openwrt, Apache-2.0).
-          cp -r "$GITHUB_WORKSPACE/package-extra/luci-app-fullcone" .
+          # Turbo ACC page (Network -> Turbo ACC Center): switches for flow offloading, full-cone NAT and BBR, so that
+          # people who do not have an assistant can change them from the web UI. Upstream: chenmozhijin/turboacc, branch luci.
+          pin https://github.com/chenmozhijin/turboacc.git 530092c532839efb96e9f328d34dbf3adff4b557 _ta
+          cp -r _ta/luci-app-turboacc .
+          rm -rf _ta
+          # Upstream ships no rpcd ACL file and no acl_depends in its controller; on OpenWrt 25.12 the menu entry then did not
+          # appear for a logged-in user (seen on the maintainer's router). Add both.
+          mkdir -p luci-app-turboacc/root/usr/share/rpcd/acl.d
+          cat > luci-app-turboacc/root/usr/share/rpcd/acl.d/luci-app-turboacc.json <<'EOACL'
+          {
+            "luci-app-turboacc": {
+              "description": "Grant access to Turbo ACC settings",
+              "read": {
+                "uci": [ "turboacc", "firewall" ],
+                "file": { "/etc/init.d/turboacc": [ "exec" ] }
+              },
+              "write": {
+                "uci": [ "turboacc", "firewall" ]
+              }
+            }
+          }
+          EOACL
+          sed -i 's|^\tpage.dependent = true|&\n\tpage.acl_depends = { "luci-app-turboacc" }|' luci-app-turboacc/luasrc/controller/turboacc.lua
+          grep -q 'acl_depends' luci-app-turboacc/luasrc/controller/turboacc.lua || { echo "ERROR: turboacc acl_depends patch did not apply"; exit 1; }
+          # Scheduled reboot page (ImmortalWrt luci, applications/luci-app-autoreboot); its Makefile points at ../../luci.mk
+          pin https://github.com/immortalwrt/luci.git 8f18275bb510818c501e4b124f872b6d30573d8a _iw /applications/luci-app-autoreboot
+          cp -r _iw/applications/luci-app-autoreboot .
+          rm -rf _iw
+          sed -i 's|include ../../luci.mk|include $(TOPDIR)/feeds/luci/luci.mk|' luci-app-autoreboot/Makefile
+          grep -q 'feeds/luci/luci.mk' luci-app-autoreboot/Makefile || { echo "ERROR: autoreboot Makefile patch did not apply"; exit 1; }
+          # eMMC health page (adminchenyu/eMMC-Health, GPL-3.0); needs mmc-utils, which is put into the image below
+          pin https://github.com/adminchenyu/eMMC-Health.git f17cbea85ebcb9071b659ac7bafd2c56a9de7b3c luci-app-emmc-health /Makefile /htdocs /root
           # Third-party sources arrive with leftover patch rejects (luci-app-quickstart ships luasrc/controller/quickstart.lua.rej,
           # which then lands in the image). Drop reject/backup files from the copied sources before they are packaged.
           find . \( -name '*.rej' -o -name '*.orig' \) -print -delete
@@ -323,6 +352,9 @@ jobs:
 
           # Build every kernel module as an installable package (so any kmod can be installed later)
           CONFIG_ALL_KMODS=y
+
+          # Compiler cache: restored/saved by the workflow around the Build step, so a rebuild only recompiles what changed
+          CONFIG_CCACHE=y
 
           # Stock LuCI: default theme and menu layout (plugins live under Services)
           CONFIG_PACKAGE_luci=y
@@ -348,8 +380,22 @@ jobs:
           CONFIG_PACKAGE_luci-app-samba4=y
           CONFIG_PACKAGE_luci-i18n-samba4-zh-cn=y
           CONFIG_PACKAGE_samba4-server=y
-          # FullCone NAT settings page (source in package-extra/luci-app-fullcone; its zh-cn translation is built with it)
-          CONFIG_PACKAGE_luci-app-fullcone=y
+          # Turbo ACC settings page: flow offloading, full-cone NAT, BBR (replaces the single-purpose FullCone page)
+          CONFIG_PACKAGE_luci-app-turboacc=y
+          CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_OFFLOADING=y
+          CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_NFT_FULLCONE=y
+          CONFIG_PACKAGE_luci-app-turboacc_INCLUDE_BBR_CCA=y
+          CONFIG_PACKAGE_luci-i18n-turboacc-zh-cn=y
+          # Traffic statistics (was installed on the previous firmware)
+          CONFIG_PACKAGE_luci-app-nlbwmon=y
+          CONFIG_PACKAGE_luci-i18n-nlbwmon-zh-cn=y
+          CONFIG_PACKAGE_nlbwmon=y
+          # Scheduled reboot page
+          CONFIG_PACKAGE_luci-app-autoreboot=y
+          CONFIG_PACKAGE_luci-i18n-autoreboot-zh-cn=y
+          # eMMC health page + the tool it calls
+          CONFIG_PACKAGE_luci-app-emmc-health=y
+          CONFIG_PACKAGE_mmc-utils=y
 
           # Third-party apps kept per user choice (sources cloned into package/extra)
           CONFIG_PACKAGE_xz-utils=y
@@ -410,10 +456,10 @@ jobs:
             find . -name '*.rej' | head -20
           fi
           # Third-party plugins are best effort: report what was dropped, but do not fail the build
-          for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-aurora luci-app-aurora-config luci-app-ttyd luci-app-samba4 luci-compat kmod-nft-fullcone openssh-sftp-server kmod-tun kmod-nf-conntrack-netlink kmod-inet-diag kmod-netlink-diag kmod-nft-tproxy coreutils-nohup luci-app-fullcone samba4-server conntrack; do
+          for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-aurora luci-app-aurora-config luci-app-ttyd luci-app-samba4 luci-compat kmod-nft-fullcone openssh-sftp-server kmod-tun kmod-nf-conntrack-netlink kmod-inet-diag kmod-netlink-diag kmod-nft-tproxy coreutils-nohup luci-app-turboacc luci-app-nlbwmon luci-app-autoreboot luci-app-emmc-health mmc-utils samba4-server conntrack; do
             if grep -q "^CONFIG_PACKAGE_$p=y" .config; then echo "plugin ok: $p"; else echo "PLUGIN DROPPED: $p"; fi
           done
-          for p in luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-upnp-zh-cn luci-i18n-samba4-zh-cn luci-i18n-fullcone-zh-cn; do
+          for p in luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-upnp-zh-cn luci-i18n-samba4-zh-cn luci-i18n-turboacc-zh-cn luci-i18n-nlbwmon-zh-cn luci-i18n-autoreboot-zh-cn; do
             if grep -q "^CONFIG_PACKAGE_$p=y" .config; then echo "langpack ok: $p"; else echo "LANGPACK DROPPED: $p"; fi
           done
           echo '--- luci-app-store config entry ---'; grep -n -A12 'config PACKAGE_luci-app-store$' tmp/.config-package.in | head -30 || true
@@ -427,11 +473,39 @@ jobs:
         working-directory: openwrt
         run: make download -j8
 
+      - name: Restore compiler cache (ccache)
+        if: ${{ !inputs.config_only }}
+        uses: actions/cache/restore@v4
+        with:
+          path: openwrt/.ccache
+          key: ${{ runner.os }}-ccache-${{ inputs.branch }}-${{ github.run_number }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-${{ inputs.branch }}-
+
       - name: Build
         if: ${{ !inputs.config_only }}
         working-directory: openwrt
+        env:
+          # rules.mk puts the cache in $(TOPDIR)/.ccache (= openwrt/.ccache) and stores it uncompressed; cap its size so the
+          # saved cache stays well inside the 10 GB per-repository GitHub cache limit (which is shared with the dl cache)
+          CCACHE_MAXSIZE: 3G
         run: |
           make -j"$(nproc)" || make -j1 V=s
+
+      - name: Compiler cache statistics
+        if: ${{ always() && !cancelled() && !inputs.config_only }}
+        working-directory: openwrt
+        run: |
+          CC="$(ls staging_dir/host/bin/ccache 2>/dev/null | head -1)"
+          if [ -n "$CC" ]; then CCACHE_DIR="$PWD/.ccache" "$CC" -s || true; else echo "ccache binary not found (cache not in use)"; fi
+          du -sh .ccache 2>/dev/null || echo "no .ccache directory"
+
+      - name: Save compiler cache (ccache)
+        if: ${{ always() && !cancelled() && !inputs.config_only }}
+        uses: actions/cache/save@v4
+        with:
+          path: openwrt/.ccache
+          key: ${{ runner.os }}-ccache-${{ inputs.branch }}-${{ github.run_number }}
 
       - name: Verify defaults inside the built rootfs
         if: ${{ !inputs.config_only }}
@@ -457,8 +531,13 @@ jobs:
           [ -s "$R/etc/s20p-build" ] && { echo "verify ok: build id file:"; cat "$R/etc/s20p-build"; } || echo "VERIFY FAILED: /etc/s20p-build"
           [ -z "$(find "$R" -name '*.rej' -o -name '*.orig' 2>/dev/null | head -1)" ] && echo "verify ok: no patch rejects in image" || { echo "VERIFY FAILED: patch rejects in image:"; find "$R" -name '*.rej' -o -name '*.orig' | head -5; }
           [ "$(grep -c '^ *FEEDS_SERVER_MIRRORS=""$' "$R/bin/is-opkg" 2>/dev/null)" = 2 ] && echo "verify ok: iStore installer goes straight to the origin server" || echo "VERIFY FAILED: is-opkg mirror patch"
-          [ -s "$R/usr/share/luci/menu.d/luci-app-fullcone.json" ] && [ -s "$R/www/luci-static/resources/view/fullcone/settings.js" ] && echo "verify ok: luci-app-fullcone in image" || echo "VERIFY FAILED: luci-app-fullcone"
-          [ -n "$(find "$R" -path '*i18n*' -name '*fullcone*' 2>/dev/null | head -1)" ] && echo "verify ok: luci-app-fullcone translation in image" || echo "VERIFY FAILED: fullcone translation"
+          [ -s "$R/usr/lib/lua/luci/controller/turboacc.lua" ] && grep -q acl_depends "$R/usr/lib/lua/luci/controller/turboacc.lua" && [ -s "$R/usr/share/rpcd/acl.d/luci-app-turboacc.json" ] && [ -x "$R/etc/init.d/turboacc" ] && [ -s "$R/etc/config/turboacc" ] && echo "verify ok: luci-app-turboacc (controller + ACL + init + config) in image" || echo "VERIFY FAILED: luci-app-turboacc"
+          [ -s "$R/usr/lib/lua/luci/i18n/turboacc.zh-cn.lmo" ] && echo "verify ok: luci-app-turboacc zh-cn translation (.lmo) in image" || echo "VERIFY FAILED: turboacc zh-cn translation (.lmo)"
+          [ "$(tr -cd '\r' < "$R/etc/init.d/turboacc" | wc -c)" = 0 ] && echo "verify ok: turboacc init script has LF line endings" || echo "VERIFY FAILED: turboacc init script has CRLF"
+          [ -s "$R/usr/share/luci/menu.d/luci-app-autoreboot.json" ] && [ -x "$R/etc/init.d/autoreboot" ] && echo "verify ok: luci-app-autoreboot in image" || echo "VERIFY FAILED: luci-app-autoreboot"
+          [ -s "$R/usr/share/luci/menu.d/luci-app-nlbwmon.json" ] && [ -x "$R/usr/sbin/nlbwmon" ] && echo "verify ok: luci-app-nlbwmon + nlbwmon in image" || echo "VERIFY FAILED: nlbwmon"
+          [ -s "$R/usr/share/luci/menu.d/luci-app-emmc-health.json" ] && [ -x "$R/usr/libexec/emmc-health" ] && [ -x "$R/usr/sbin/mmc" ] && echo "verify ok: luci-app-emmc-health + mmc in image" || echo "VERIFY FAILED: emmc-health / mmc"
+          grep -q "turboacc" "$R/etc/uci-defaults/99-clx-s20p-defaults" && grep -q "aarch64_generic" "$R/etc/uci-defaults/99-clx-s20p-defaults" && grep -q "Interface" "$R/etc/uci-defaults/99-clx-s20p-defaults" && echo "verify ok: defaults script enables turboacc, adds apk arch, binds dropbear to lan" || echo "VERIFY FAILED: defaults script content"
           [ -x "$R/usr/sbin/smbd" ] && echo "verify ok: samba (smbd) in image" || echo "VERIFY FAILED: smbd"
           [ -x "$R/usr/sbin/conntrack" ] && echo "verify ok: conntrack CLI in image" || echo "VERIFY FAILED: conntrack CLI"
           grep -E "flow_offloading|fullcone" "$R/etc/config/firewall" | tr -s '\t ' ' ' | head -6
@@ -525,8 +604,9 @@ jobs:
           - Board name / 机型标识: clx,s20p (CLX S20P, Super Gateway S20P hardware is the same / 超级网关 S20P 硬件相同)
           - Base / 基础: official openwrt/openwrt branch $BRANCH, upstream commit $(cat upstream-commit.txt)
           - Device tree derived from VIKINGYFY/immortalwrt (GPL-2.0-or-later OR MIT)
-          - Extra packages / 额外插件: iStore store, quickstart, aurora theme, mini-diskmanager, ttyd, samba4, luci-compat, openssh-sftp-server, luci-app-fullcone, conntrack (conntrack-tools CLI); kernel modules kmod-tun / kmod-nf-conntrack-netlink / kmod-inet-diag / kmod-netlink-diag / kmod-nft-tproxy and coreutils-nohup are in the image; all other kernel modules are built as packages
-          - Full-cone NAT (nftables, not in official OpenWrt; patches in fullcone/) is ON by default (IPv4), as is hardware flow offloading (flow_offloading and flow_offloading_hw are both 1; in firewall4 the hardware flag only works together with the software one). Switch: Network → Firewall → FullCone NAT, or the options in /etc/config/firewall. A kernel patch (conntrack events) lets nft_fullcone and nf_conntrack_netlink coexist / 全锥型 NAT（IPv4）和硬件流量卸载默认开启（两个选项都为 1，firewall4 里硬件开关必须和软件开关一起才生效）；开关在"网络 → 防火墙 → FullCone NAT"，也可改 /etc/config/firewall；内核补丁让 nft_fullcone 和 nf_conntrack_netlink 可以共存
+          - Extra packages / 额外插件: iStore store, quickstart, aurora theme, mini-diskmanager, ttyd, samba4, luci-compat, openssh-sftp-server, luci-app-turboacc (Network → Turbo ACC Center), luci-app-nlbwmon, luci-app-autoreboot, luci-app-emmc-health, conntrack (conntrack-tools CLI); kernel modules kmod-tun / kmod-nf-conntrack-netlink / kmod-inet-diag / kmod-netlink-diag / kmod-nft-tproxy and coreutils-nohup are in the image; all other kernel modules are built as packages
+          - Full-cone NAT (nftables, not in official OpenWrt; patches in fullcone/), software + hardware flow offloading and BBR are ON by default and are controlled from Network → Turbo ACC Center (the first-boot script no longer writes those firewall options; Turbo ACC applies them at every boot, so changing them on the LuCI firewall page is overwritten at the next boot; in firewall4 hardware offloading only works together with software offloading). IPv6 full-cone stays off (with a delegated prefix every device has its own public IPv6 address). Leave "MTK WED WO offloading" off unless you know you need it (it reloads the WiFi driver). A kernel patch (conntrack events) lets nft_fullcone and nf_conntrack_netlink coexist / 全锥型 NAT、软硬件流量卸载和 BBR 默认开启，由"网络 → Turbo ACC Center"统一控制（首次开机脚本不再写这几项防火墙选项；Turbo ACC 每次开机会重新应用，所以在 LuCI 防火墙页改这几项会在下次开机被改回来；firewall4 里硬件卸载必须和软件卸载一起才生效）。IPv6 全锥形默认关（有 IPv6 前缀时每台设备都有自己的公网 IPv6 地址）。"MTK WED WO offloading"不要勾，除非你清楚需要它（会重载 WiFi 驱动）。内核补丁让 nft_fullcone 和 nf_conntrack_netlink 可以共存
+          - Security defaults / 安全默认设置: SSH (dropbear) listens on the LAN interface only and the WAN-side Ping / IPsec ESP / ISAKMP accept rules are disabled (the WAN zone still rejects all other incoming traffic); password login stays enabled, so set a key and turn password login off yourself if the router has a public IP / SSH 只监听 LAN 接口，WAN 侧 Ping、IPsec ESP、ISAKMP 的放行规则默认关闭（WAN 区域仍拒绝其他入站）；密码登录仍然开启，如果路由器有公网 IP，请自行配置密钥并关闭密码登录
           - First-boot defaults / 首次开机默认设置: data partition p7 is mounted at /mnt/data (matched by device, never formatted), UPnP on (plus a first-boot patch for carrier-grade NAT WAN addresses 100.64.x, where the stock miniupnpd init script rejects all port mappings; applied and tested by hand on the maintainer's router, not yet verified from this image), samba is installed without any share / p7 数据分区挂载到 /mnt/data（按设备匹配，不会格式化），UPnP 开（另有首次开机补丁，处理运营商 CGNAT 的 100.64.x 地址下官方 miniupnpd 脚本拒绝所有端口映射的问题；已在维护者路由器上手动验证，尚未从这个镜像验证），samba 已装但没有任何共享
           - iStore installs go straight to the origin server (the mirror repo.istoreos.com was unreliable) / iStore 装包直接走源站（镜像不稳定）
           - Known: browser-based NAT checkers may read "port restricted" although full-cone is on and a raw UDP (RFC 3489) test shows full-cone mapping, and probes from other IPs/ports reach the LAN; the cause of the display value is not established / 已知：网页版 NAT 检测可能显示"端口受限"，但全锥型已开，原始 UDP（RFC 3489）测试是全锥形映射，换 IP/换端口的探测包也能到达局域网；这个显示值的原因尚未查明
