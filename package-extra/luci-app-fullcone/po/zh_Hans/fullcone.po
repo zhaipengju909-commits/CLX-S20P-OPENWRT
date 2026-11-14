@@ -1,0 +1,37 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: zh_Hans\n"
+"MIME-Version: 1.0\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "Enable FullCone NAT"
+msgstr "启用全锥形 NAT"
+
+msgid "Enable FullCone NAT6"
+msgstr "启用 IPv6 全锥形 NAT"
+
+msgid "Full cone NAT (NAT1) for UDP. Once a LAN host has sent a packet from a port, any host on the internet can reach it on the mapped external port. It replaces masquerading in zones that have masquerading enabled; other protocols are masqueraded as before."
+msgstr "UDP 的全锥形 NAT(NAT1)。局域网主机从某个端口发出数据包后,互联网上任意主机都可以通过映射的外网端口访问它。它会替换已启用地址伪装的区域里的地址伪装;其他协议仍按原来的方式伪装。"
+
+msgid "FullCone NAT"
+msgstr "全锥形 NAT"
+
+msgid "Grant access to FullCone NAT settings"
+msgstr "授予访问全锥形 NAT 设置的权限"
+
+msgid "IPv4, in zones with masquerading enabled."
+msgstr "IPv4,仅在已启用地址伪装的区域生效。"
+
+msgid "IPv6, only in zones with IPv6 masquerading enabled. Usually not needed."
+msgstr "IPv6,仅在已启用 IPv6 地址伪装的区域生效,通常不需要。"
+
+msgid "Kernel module"
+msgstr "内核模块"
+
+msgid "nft_fullcone is loaded"
+msgstr "nft_fullcone 已加载"
+
+msgid "nft_fullcone is not loaded - firewall4 will fall back to masquerading"
+msgstr "nft_fullcone 未加载,firewall4 将退回普通地址伪装"
