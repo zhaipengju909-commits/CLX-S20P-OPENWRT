@@ -36,12 +36,13 @@
 
 ## 三、包含什么
 
-- **官方原版 LuCI**，默认主题 aurora。**注意:`s20p-20261113-0049` 及更早的版本没有带简体中文语言包,界面是英文**(计划从下一个版本起加入)。
-- **全套内核模块**：`CONFIG_ALL_KMODS=y`，所有内核模块都编成了可安装的包，后面缺什么驱动都能装（打包在 Release 的 `kmod-and-packages.tar.zst` 里）。
-- **额外插件**（官方源）：ttyd 终端、samba4 共享、wol 网络唤醒、sqm 限速、upnp、ddns、wireguard。
+- **官方原版 LuCI**，默认主题 aurora。自 b12 起已内置简体中文语言包（b18 真机实测 12 个 `luci-i18n-*-zh-cn`）；`s20p-20261113-0049` 及更早版本界面为英文。
+- **全套内核模块**：`CONFIG_ALL_KMODS=y`，所有内核模块都编成了可安装的包，后面缺什么驱动都能装（打包在 Release 的 `*-packages.tar.zst` 里，文件名前缀与构建名一致）。
+- **额外插件**（官方源）：ttyd 终端、samba4 共享、upnp、ddns、wireguard、`luci-compat`（兼容旧版 Lua LuCI 应用）。wol 与 sqm 已从镜像移除。
 - **额外插件**（第三方源，编译时现拉）：iStore 商店（luci-app-store）、quickstart 首页、aurora 主题、mini-diskmanager 磁盘管理。
 - **没有预装代理类插件**（openclash、passwall 等），等能开机了再自己装。
-- **没有的东西**：联发科 SDK 专用的 turboacc-mtk、eqos-mtk、mtwifi-cfg 不能用在官方内核上；官方 OpenWrt 也没有全锥型 NAT(fullcone)。硬件加速改用官方的"硬件流量卸载"，无线走官方 mt76 驱动。
+- **全锥型 NAT**：官方 OpenWrt 主线不含 fullcone，本项目通过 `kmod-nft-fullcone` + firewall4 补丁提供 IPv4 全锥形（`luci-app-fullcone` 可管理）。镜像默认不开，刷机后由恢复脚本设 `firewall.@defaults[0].fullcone=1`、`fullcone6=0`。b18 实测：同一本地端口对多家 STUN 服务器映射一致，换 IP + 换端口的回包可进入内网。
+- **没有的东西**：联发科 SDK 专用的 turboacc-mtk、eqos-mtk、mtwifi-cfg 不能用在官方内核上；硬件加速改用官方主线自带的"硬件流量卸载"（b18 实测 PPE 流表绑定生效、CPU 占用低），无线走官方 mt76 驱动。
 
 ---
 
@@ -66,11 +67,23 @@
 - Wi-Fi 的吞吐和稳定性；
 - 在其他机器、其他分区布局、原厂系统上刷机。
 
-**已知问题和解决办法(`s20p-20261113-0049`):**
+**已知问题和解决办法(`s20p-20261113-0049`,仅适用于该历史版本;当前状态见下节):**
 
-1. 界面是英文:这个版本漏装了简体中文语言包。
-2. iStore 里一些第三方应用(例如 homebox)打开时报 `module 'luci.cbi' not found`:这类应用用的是老的 Lua 界面框架,需要 `luci-compat`。在路由器上执行 `apk add luci-compat`(官方软件源里有)。
-3. 官方软件源里**没有适配本固件内核的内核模块**(例如 `kmod-tun`、`kmod-nft-tproxy`)。请使用本 Release 里的 `kmod-and-packages.tar.zst`:解压后整个目录复制到路由器的 `/tmp/pk`(必须整包复制,不能只拷一两个文件),然后执行 `apk add --repository /tmp/pk/packages.adb kmod-tun`。软件源索引的签名可以被固件直接信任,不需要 `--allow-untrusted`。
+1. 界面是英文:这个版本漏装了简体中文语言包。**b12 起已修复**。
+2. iStore 里一些第三方应用(例如 homebox)打开时报 `module 'luci.cbi' not found`:这类应用用的是老的 Lua 界面框架,需要 `luci-compat`。0049 上可执行 `apk add luci-compat`(官方软件源里有);**b12 起已编入镜像**。
+3. 官方软件源里**没有适配本固件内核的内核模块**,需要时使用本 Release 里的 `*-packages.tar.zst`。解压后把**整个目录**复制到路由器的 `/tmp/pk`(不能只拷一两个文件);推荐把本地源写进 `/etc/apk/repositories.d/zz-local.list` 后执行 `apk update`,再 `apk add <包名>`。也可直接 `apk add --repository /tmp/pk/packages.adb <包名>`(个别环境会因已安装包的索引报 `no such package`,此时改用前一种方式)。软件源索引的签名可以被固件直接信任,不需要 `--allow-untrusted`。**注**:b18 起常用内核模块(见下节)已编入镜像,本条主要用于其他驱动。
+4. **本固件不带在线更新功能**:没有安装 `attendedsysupgrade` / `owut`,"备份/刷写固件"页面只能手动上传镜像。升级请到本仓库的 Releases 页面手动下载新版本。官方 OpenWrt 的源码里没有 `clx_s20p` 这个机型,所以**请不要用官方的在线固件升级(attendedsysupgrade)来升级本固件**,会发生什么没有验证过。
+5. **"软件包"页面的"更新列表"查的是官方软件源**,和本固件的版本无关。官方源里没有适配本固件内核的内核模块,**请不要点"全部升级"**,否则基础包可能和本固件不匹配(没有验证过具体后果);只安装你需要的单个软件包,需要内核模块时按第 3 条使用 Release 里的同批软件包。
+
+**当前版本状态更新(b18 `r0-3c132d0`,内核 6.12.116,2026-11-14 真机实测):**
+
+- 0049 的第 1、2 条问题已修复:内置 12 个简体中文语言包与 `luci-compat`;wol、sqm 及对应自启项已从镜像移除。
+- 代理插件所需内核模块 `kmod-tun`、`kmod-nft-tproxy`、`kmod-inet-diag`、`kmod-netlink-diag`、`kmod-nf-conntrack-netlink`,以及 `dnsmasq-full`、`coreutils-nohup`、`openssh-sftp-server`、`kmod-nft-fullcone` 已编入镜像,刷机后无需再为这些包挂本地源。**其他**内核模块仍按上文第 3 条使用 Release 里的同批软件包。
+- 内核已带 conntrack 事件链补丁,`dmesg` 无 `nf_conntrack_register_notifier` WARNING。
+- 出厂两个无线接口均为 disabled;时区由恢复脚本设为 `Asia/Shanghai` / `CST-8`;主机名仍为默认 `OpenWrt`。
+- IPv4 全锥形 NAT 已可用,实测行为为 NAT1(Full Cone)。浏览器类 NAT 检测工具显示的 NAT3 属于客户端(WebRTC/浏览器)不回应换 IP 探测所致,已由 WAN/LAN 同步抓包证实与固件无关,请勿据此修改 NAT 配置。
+- 官方主线硬件流量卸载已实测生效,但"开/关"吞吐对照测量仍未完成。
+- 上文第 4、5 条**仍然适用**:本固件不带在线更新功能,且不要点"全部升级"。
 
 ---
 
