@@ -154,7 +154,7 @@ jobs:
             "$GITHUB_RUN_NUMBER" "$BRANCH" "$GITHUB_RUN_ID" > files/etc/s20p-build
           cat files/etc/s20p-build
 
-      - name: First-boot defaults (CGNAT UPnP fix, official firewall defaults)
+      - name: First-boot defaults (CGNAT UPnP fix, CLX defaults)
         working-directory: openwrt
         run: |
           set -euo pipefail
@@ -179,18 +179,10 @@ jobs:
           /etc/init.d/miniupnpd restart >/dev/null 2>&1 || true
           EOS
           chmod +x files/etc/uci-defaults/99-upnpd-cgnat
-          cat > files/etc/uci-defaults/98-firewall-defaults <<'EOS2'
-          #!/bin/sh
-          # The ImmortalWrt firewall4 patch enables fullcone and both flow
-          # offloading modes out of the box. Keep official-style defaults:
-          # reset them at first boot; the provisioning script can re-enable.
-          uci set firewall.@defaults[0].fullcone='0'
-          uci set firewall.@defaults[0].fullcone6='0'
-          uci set firewall.@defaults[0].flow_offloading='0'
-          uci set firewall.@defaults[0].flow_offloading_hw='0'
-          uci commit firewall
-          EOS2
-          chmod +x files/etc/uci-defaults/98-firewall-defaults
+          # CLX defaults (maintainer's decision): hardware flow offloading on, full-cone NAT on, UPnP on, and the data
+          # partition p7 mounted at /mnt/data (matched by device, never formatted). Details in the script itself.
+          cp "$GITHUB_WORKSPACE/files/etc/uci-defaults/99-clx-s20p-defaults" files/etc/uci-defaults/
+          chmod 755 files/etc/uci-defaults/99-clx-s20p-defaults
           ls -l files/etc/uci-defaults/
 
       - name: Add full-cone NAT (nftables fullcone, patches adapted from ImmortalWrt)
@@ -291,6 +283,12 @@ jobs:
           pin https://github.com/linkease/istore.git a97ace34f2da358a015b094d326bba2697697f2e _istore
           cp -r _istore/luci/luci-app-store _istore/luci/luci-lib-taskd _istore/luci/luci-lib-xterm _istore/luci/taskd .
           rm -rf _istore
+          # iStore's installer (is-opkg) tries the mirror repo.istoreos.com first. From this network the mirror was measured
+          # at 0.5 MB in 97 s and then dropped, while the origin istore.istoreos.com gave 3.3 MB in 35 s, so installs failed.
+          # Empty both mirror lists: the script then skips the mirror loop and goes straight to the origin server.
+          sed -i 's|^\( *FEEDS_SERVER_MIRRORS=\).*|\1""|' luci-app-store/root/bin/is-opkg
+          [ "$(grep -c '^ *FEEDS_SERVER_MIRRORS=""$' luci-app-store/root/bin/is-opkg)" = 2 ] \
+            || { echo "ERROR: is-opkg mirror patch did not apply (expected 2 lines)"; exit 1; }
           # Quickstart dashboard (sparse checkout from small-package)
           pin https://github.com/kenzok8/small-package.git 115c2ad528594ce47e5188e79c797b8222b9b35d _sp /quickstart /luci-app-quickstart
           cp -r _sp/quickstart _sp/luci-app-quickstart .
@@ -303,6 +301,12 @@ jobs:
           pin https://github.com/eamonxg/luci-theme-aurora.git 298dbcc74ddf820923a51285fb0826d429e5d7ca luci-theme-aurora
           pin https://github.com/eamonxg/luci-app-aurora-config.git a5299ce0144859f47683ec3bc40805bf616f534f luci-app-aurora-config
           rm -rf luci-theme-aurora/.git luci-app-aurora-config/.git
+          # FullCone NAT settings page (Network -> Firewall -> FullCone NAT). Official LuCI has no such switch.
+          # Source is vendored in this repo (package-extra/luci-app-fullcone, from akorshun/fullcone-openwrt, Apache-2.0).
+          cp -r "$GITHUB_WORKSPACE/package-extra/luci-app-fullcone" .
+          # Third-party sources arrive with leftover patch rejects (luci-app-quickstart ships luasrc/controller/quickstart.lua.rej,
+          # which then lands in the image). Drop reject/backup files from the copied sources before they are packaged.
+          find . \( -name '*.rej' -o -name '*.orig' \) -print -delete
           ls
           grep -H -E '^PKG_VERSION' luci-app-quickstart/Makefile quickstart/Makefile luci-app-store/Makefile
 
@@ -343,6 +347,9 @@ jobs:
           CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
           CONFIG_PACKAGE_luci-app-samba4=y
           CONFIG_PACKAGE_luci-i18n-samba4-zh-cn=y
+          CONFIG_PACKAGE_samba4-server=y
+          # FullCone NAT settings page (source in package-extra/luci-app-fullcone; its zh-cn translation is built with it)
+          CONFIG_PACKAGE_luci-app-fullcone=y
 
           # Third-party apps kept per user choice (sources cloned into package/extra)
           CONFIG_PACKAGE_xz-utils=y
@@ -366,7 +373,7 @@ jobs:
           CONFIG_PACKAGE_iperf3=y
           CONFIG_PACKAGE_irqbalance=y
 
-          # Full-cone NAT kernel module (patches in fullcone/; uci-defaults resets it to 0) and SFTP server (so scp works with dropbear)
+          # Full-cone NAT kernel module (patches in fullcone/; on by default, see 99-clx-s20p-defaults) and SFTP server (so scp works with dropbear)
           CONFIG_PACKAGE_kmod-nft-fullcone=y
           CONFIG_PACKAGE_openssh-sftp-server=y
 
@@ -403,10 +410,10 @@ jobs:
             find . -name '*.rej' | head -20
           fi
           # Third-party plugins are best effort: report what was dropped, but do not fail the build
-          for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-aurora luci-app-aurora-config luci-app-ttyd luci-app-samba4 luci-compat kmod-nft-fullcone openssh-sftp-server kmod-tun kmod-nf-conntrack-netlink kmod-inet-diag kmod-netlink-diag kmod-nft-tproxy coreutils-nohup; do
+          for p in luci-app-store luci-app-quickstart luci-app-mini-diskmanager luci-theme-aurora luci-app-aurora-config luci-app-ttyd luci-app-samba4 luci-compat kmod-nft-fullcone openssh-sftp-server kmod-tun kmod-nf-conntrack-netlink kmod-inet-diag kmod-netlink-diag kmod-nft-tproxy coreutils-nohup luci-app-fullcone samba4-server conntrack; do
             if grep -q "^CONFIG_PACKAGE_$p=y" .config; then echo "plugin ok: $p"; else echo "PLUGIN DROPPED: $p"; fi
           done
-          for p in luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-upnp-zh-cn luci-i18n-samba4-zh-cn; do
+          for p in luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-upnp-zh-cn luci-i18n-samba4-zh-cn luci-i18n-fullcone-zh-cn; do
             if grep -q "^CONFIG_PACKAGE_$p=y" .config; then echo "langpack ok: $p"; else echo "LANGPACK DROPPED: $p"; fi
           done
           echo '--- luci-app-store config entry ---'; grep -n -A12 'config PACKAGE_luci-app-store$' tmp/.config-package.in | head -30 || true
@@ -443,7 +450,18 @@ jobs:
           echo "kernel config: $KC"
           grep -q '^CONFIG_NF_CONNTRACK_CHAIN_EVENTS=y' "$KC" && echo "verify ok: kernel has NF_CONNTRACK_CHAIN_EVENTS" || echo "VERIFY FAILED: kernel NF_CONNTRACK_CHAIN_EVENTS"
           grep -q '^CONFIG_NF_CONNTRACK_EVENTS=y' "$KC" && echo "verify ok: kernel has NF_CONNTRACK_EVENTS" || echo "VERIFY FAILED: kernel NF_CONNTRACK_EVENTS"
-          [ -f "$R/usr/bin/nohup" ] && echo "verify ok: nohup in image" || echo "VERIFY FAILED: nohup"
+          # /usr/bin/nohup is a symlink to an absolute in-image path (/usr/libexec/nohup-coreutils): test the link and its target separately
+          [ -L "$R/usr/bin/nohup" ] && [ -e "$R/usr/libexec/nohup-coreutils" ] && echo "verify ok: nohup in image" || echo "VERIFY FAILED: nohup"
+          [ -s "$R/etc/uci-defaults/99-clx-s20p-defaults" ] && echo "verify ok: CLX first-boot defaults script in image" || echo "VERIFY FAILED: CLX first-boot defaults script"
+          [ -s "$R/etc/uci-defaults/99-upnpd-cgnat" ] && echo "verify ok: CGNAT UPnP fix script in image" || echo "VERIFY FAILED: CGNAT UPnP fix script"
+          [ -s "$R/etc/s20p-build" ] && { echo "verify ok: build id file:"; cat "$R/etc/s20p-build"; } || echo "VERIFY FAILED: /etc/s20p-build"
+          [ -z "$(find "$R" -name '*.rej' -o -name '*.orig' 2>/dev/null | head -1)" ] && echo "verify ok: no patch rejects in image" || { echo "VERIFY FAILED: patch rejects in image:"; find "$R" -name '*.rej' -o -name '*.orig' | head -5; }
+          [ "$(grep -c '^ *FEEDS_SERVER_MIRRORS=""$' "$R/bin/is-opkg" 2>/dev/null)" = 2 ] && echo "verify ok: iStore installer goes straight to the origin server" || echo "VERIFY FAILED: is-opkg mirror patch"
+          [ -s "$R/usr/share/luci/menu.d/luci-app-fullcone.json" ] && [ -s "$R/www/luci-static/resources/view/fullcone/settings.js" ] && echo "verify ok: luci-app-fullcone in image" || echo "VERIFY FAILED: luci-app-fullcone"
+          [ -n "$(find "$R" -path '*i18n*' -name '*fullcone*' 2>/dev/null | head -1)" ] && echo "verify ok: luci-app-fullcone translation in image" || echo "VERIFY FAILED: fullcone translation"
+          [ -x "$R/usr/sbin/smbd" ] && echo "verify ok: samba (smbd) in image" || echo "VERIFY FAILED: smbd"
+          [ -x "$R/usr/sbin/conntrack" ] && echo "verify ok: conntrack CLI in image" || echo "VERIFY FAILED: conntrack CLI"
+          grep -E "flow_offloading|fullcone" "$R/etc/config/firewall" | tr -s '\t ' ' ' | head -6
           ls "$R"/lib/modules/*/nft_fullcone.ko "$R"/lib/modules/*/nf_conntrack_netlink.ko "$R"/lib/modules/*/tun.ko >/dev/null 2>&1 && echo "verify ok: nft_fullcone, nf_conntrack_netlink, tun modules in image" || echo "VERIFY FAILED: kernel modules in image"
 
       - name: Collect artifacts
@@ -488,9 +506,9 @@ jobs:
           cat > notes.md <<NOTES
           ## CLX S20P - official OpenWrt (experimental)
 
-          **This is a practice project. It has NOT been verified to boot, and it has not been shown to work correctly on real hardware. Flashing may leave the device unusable. Use at your own risk, and only if you can recover the device yourself (U-Boot / serial). No warranty of any kind.**
+          **This is a practice project, tested only on the maintainer's own S20P. Earlier builds booted there and were used for PPPoE, LAN, full-cone NAT rules, Samba, iStore and proxy-plugin installs; this build has not been verified on your hardware, and things not listed here (hardware offload throughput, Wi-Fi, M.2, buttons) have not been verified at all. Flashing may leave the device unusable. Use at your own risk, and only if you can recover the device yourself (U-Boot / serial). No warranty of any kind.**
 
-          **这是练手项目，尚未验证能否开机，也不保证所有功能正常。刷机可能导致设备无法启动，风险自负；请先备份并确认自己有恢复手段（U-Boot / 串口）。不提供任何担保。**
+          **这是练手项目，只在维护者自己的一台 S20P 上测试过。之前的版本在那台机器上能开机，并用过 PPPoE 拨号、LAN、全锥形 NAT 规则、Samba、iStore 以及代理插件的安装；这个版本没有在你的硬件上验证过，没列出来的功能（硬件卸载吞吐、Wi-Fi、M.2、按键）完全没有验证。刷机可能导致设备无法启动，风险自负；请先备份并确认自己有恢复手段（U-Boot / 串口）。不提供任何担保。**
 
           - Build / 构建号: $BUILD ($NAME)
           - Management address / 管理地址: http://192.168.2.1
@@ -498,8 +516,11 @@ jobs:
           - Board name / 机型标识: clx,s20p (CLX S20P, Super Gateway S20P hardware is the same / 超级网关 S20P 硬件相同)
           - Base / 基础: official openwrt/openwrt branch $BRANCH, upstream commit $(cat upstream-commit.txt)
           - Device tree derived from VIKINGYFY/immortalwrt (GPL-2.0-or-later OR MIT)
-          - Extra packages / 额外插件: iStore store, quickstart, aurora theme, mini-diskmanager, ttyd, samba4, luci-compat, openssh-sftp-server, conntrack (conntrack-tools CLI); all kernel modules are built as packages
-          - Full-cone NAT / flow offloading: the firewall4 patch enables them, but this build resets fullcone, flow_offloading and flow_offloading_hw to '0' at first boot; set to '1' in firewall defaults to enable / 全锥型 NAT 与流量卸载在本构建中出厂默认关闭，需要时在防火墙 defaults 里设为 '1'
+          - Extra packages / 额外插件: iStore store, quickstart, aurora theme, mini-diskmanager, ttyd, samba4, luci-compat, openssh-sftp-server, luci-app-fullcone, conntrack (conntrack-tools CLI); kernel modules kmod-tun / kmod-nf-conntrack-netlink / kmod-inet-diag / kmod-netlink-diag / kmod-nft-tproxy and coreutils-nohup are in the image; all other kernel modules are built as packages
+          - Full-cone NAT (nftables, not in official OpenWrt; patches in fullcone/) is ON by default (IPv4), as is hardware flow offloading (flow_offloading and flow_offloading_hw are both 1; in firewall4 the hardware flag only works together with the software one). Switch: Network → Firewall → FullCone NAT, or the options in /etc/config/firewall. A kernel patch (conntrack events) lets nft_fullcone and nf_conntrack_netlink coexist / 全锥型 NAT（IPv4）和硬件流量卸载默认开启（两个选项都为 1，firewall4 里硬件开关必须和软件开关一起才生效）；开关在"网络 → 防火墙 → FullCone NAT"，也可改 /etc/config/firewall；内核补丁让 nft_fullcone 和 nf_conntrack_netlink 可以共存
+          - First-boot defaults / 首次开机默认设置: data partition p7 is mounted at /mnt/data (matched by device, never formatted), UPnP on (plus a first-boot patch for carrier-grade NAT WAN addresses 100.64.x, where the stock miniupnpd init script rejects all port mappings; applied and tested by hand on the maintainer's router, not yet verified from this image), samba is installed without any share / p7 数据分区挂载到 /mnt/data（按设备匹配，不会格式化），UPnP 开（另有首次开机补丁，处理运营商 CGNAT 的 100.64.x 地址下官方 miniupnpd 脚本拒绝所有端口映射的问题；已在维护者路由器上手动验证，尚未从这个镜像验证），samba 已装但没有任何共享
+          - iStore installs go straight to the origin server (the mirror repo.istoreos.com was unreliable) / iStore 装包直接走源站（镜像不稳定）
+          - Known: browser-based NAT checkers may read "port restricted" although full-cone is on and a raw UDP (RFC 3489) test shows full-cone mapping, and probes from other IPs/ports reach the LAN; the cause of the display value is not established / 已知：网页版 NAT 检测可能显示"端口受限"，但全锥型已开，原始 UDP（RFC 3489）测试是全锥形映射，换 IP/换端口的探测包也能到达局域网；这个显示值的原因尚未查明
           - Flash with sysupgrade WITHOUT keeping settings / 刷机时不要勾选"保留配置"
           - Not affiliated with OpenWrt, CLX, Super Gateway or any plugin author. Not an official release.
           - See the repository README for details / 详见仓库 README
