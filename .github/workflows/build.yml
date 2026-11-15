@@ -459,7 +459,7 @@ jobs:
             for d in $(awk -v p="$p" '$0=="Package: " p {f=1; next} /^Package: /{f=0} f && /^Depends: /{sub(/^Depends: /,""); print}' tmp/.packageinfo); do
               n="${d#+}"; n="${n#@}"
               case "$n" in *:*|*\(*|!*|"") continue;; esac
-              if ! grep -qE "^(Package|Provides): .*(^| )$n( |$)" tmp/.packageinfo; then echo "CHECK FAILED: $p depends on '$n', which does not exist"; fail=1; fi
+              if ! grep -q "^Package: $n$" tmp/.packageinfo && ! grep -qE "^Provides: (.* )?$n( .*)?$" tmp/.packageinfo; then echo "CHECK FAILED: $p depends on '$n', which does not exist"; fail=1; fi
             done
           done
           [ "$fail" = 0 ] || exit 1
