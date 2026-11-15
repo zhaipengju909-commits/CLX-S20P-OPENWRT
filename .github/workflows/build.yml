@@ -333,6 +333,10 @@ jobs:
           grep -q 'feeds/luci/luci.mk' luci-app-autoreboot/Makefile || { echo "ERROR: autoreboot Makefile patch did not apply"; exit 1; }
           # eMMC health page (adminchenyu/eMMC-Health, GPL-3.0); needs mmc-utils, which is put into the image below
           pin https://github.com/adminchenyu/eMMC-Health.git f17cbea85ebcb9071b659ac7bafd2c56a9de7b3c luci-app-emmc-health /Makefile /htdocs /root
+          # Upstream depends on luci-js-deps, which does not exist in OpenWrt 25.12 (the image step failed with "no such package").
+          # The page is plain LuCI JS and only needs luci-base + rpcd.
+          sed -i 's/ +luci-js-deps//' luci-app-emmc-health/Makefile
+          grep -q 'luci-js-deps' luci-app-emmc-health/Makefile && { echo "ERROR: emmc-health luci-js-deps patch did not apply"; exit 1; }
           # Third-party sources arrive with leftover patch rejects (luci-app-quickstart ships luasrc/controller/quickstart.lua.rej,
           # which then lands in the image). Drop reject/backup files from the copied sources before they are packaged.
           find . \( -name '*.rej' -o -name '*.orig' \) -print -delete
@@ -354,6 +358,7 @@ jobs:
           CONFIG_ALL_KMODS=y
 
           # Compiler cache: restored/saved by the workflow around the Build step, so a rebuild only recompiles what changed
+          CONFIG_DEVEL=y
           CONFIG_CCACHE=y
 
           # Stock LuCI: default theme and menu layout (plugins live under Services)
@@ -449,6 +454,14 @@ jobs:
           chk '^CONFIG_ALL_KMODS=y'
           chk '^CONFIG_PACKAGE_luci=y'
           chk '^CONFIG_PACKAGE_conntrack=y'
+          # Every non-conditional dependency of the packages we add must exist (a missing one only fails at the very end of the build)
+          for p in luci-app-turboacc luci-app-nlbwmon luci-app-autoreboot luci-app-emmc-health mmc-utils; do
+            for d in $(awk -v p="$p" '$0=="Package: " p {f=1; next} /^Package: /{f=0} f && /^Depends: /{sub(/^Depends: /,""); print}' tmp/.packageinfo); do
+              n="${d#+}"; n="${n#@}"
+              case "$n" in *:*|*\(*|!*|"") continue;; esac
+              if ! grep -qE "^(Package|Provides): .*(^| )$n( |$)" tmp/.packageinfo; then echo "CHECK FAILED: $p depends on '$n', which does not exist"; fail=1; fi
+            done
+          done
           [ "$fail" = 0 ] || exit 1
           # Report leftover patch rejects; do not fail the build yet
           if find . -name '*.rej' -print -quit | grep -q .; then
