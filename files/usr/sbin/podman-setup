@@ -1,0 +1,124 @@
+#!/bin/sh
+# podman-setup — one-shot, idempotent Podman setup for OpenWrt 25.12 + firewall4 (CLX S20 Pro firmware).
+# podman-setup — 在 OpenWrt 25.12 + fw4 上一次配好 Podman(可重复运行,不会重复添加)。
+#
+# Usage / 用法:
+#   apk add podman          # from the official feed; kmod-veth is already in this firmware
+#                           # 从官方源安装;本固件已自带 kmod-veth
+#   podman-setup            # data goes to /mnt/data/podman (the data partition) / 数据放在 /mnt/data/podman(数据分区)
+#   podman-setup /some/dir  # or any directory on a real disk / 或指定一个真实磁盘上的目录
+#
+# What it changes (all verified by hand on the S20 Pro, see Podman验证记录 in the repo):
+# 它做的事(都在 S20 Pro 上手工验证过):
+#   1. netavark firewall backend -> nftables (the default iptables backend fails on firewall4)
+#      netavark 防火墙后端改成 nftables(默认的 iptables 后端在 fw4 上会失败)
+#   2. image/container storage -> a disk directory (the default /var/lib/containers is RAM on OpenWrt)
+#      镜像/容器存储改到磁盘目录(默认的 /var/lib/containers 在 OpenWrt 上是内存)
+#   3. the podman service is NOT started at boot (the package enables it; a resident API service is not needed)
+#      podman 服务不开机启动(软件包会自动启用它,常驻 API 服务用不上)
+#   4. firewall zone "podman" (device podman0): containers may reach the internet and the router's DNS, nothing else
+#      防火墙新建 "podman" 区:容器只能上外网和用路由器的 DNS,别的都不行
+#   5. dnsmasq stops listening on podman0, so the container DNS (aardvark-dns) can bind 10.88.0.1:53
+#      dnsmasq 不再监听 podman0,容器 DNS(aardvark-dns)才能绑定 10.88.0.1:53
+#   6. if PassWall2 is installed: lets containers reach its DNS and TCP redirect ports (defaults below; they
+#      are what PassWall2 used on the author's router, check them if container traffic does not work)
+#      如果装了 PassWall2:放行容器到它的 DNS 和 TCP 重定向端口(下面是作者路由器上的默认值,容器不通时请核对)
+#
+# Container memory limits only work with the memory cgroup, which this firmware's kernel has.
+# 容器内存限制要靠内存 cgroup,本固件内核已开启。
+
+PW2_DNS_PORT=2004
+PW2_TCP_PORT=2001
+
+say() { echo "[podman-setup] $*"; }
+die() { say "ERROR: $*"; exit 1; }
+
+command -v podman >/dev/null 2>&1 || die "podman is not installed. Run: apk add podman  /  还没装 podman,先运行: apk add podman"
+
+DATA="${1:-/mnt/data/podman}"
+CC=/etc/containers/containers.conf
+SC=/etc/containers/storage.conf
+[ -f "$CC" ] || die "$CC not found (is the podman package complete?)"
+[ -f "$SC" ] || die "$SC not found (is the podman package complete?)"
+
+# --- 2) storage first, so we can refuse before changing anything else
+if [ "$DATA" = /mnt/data/podman ] && ! grep -q ' /mnt/data ' /proc/mounts; then
+	die "/mnt/data is not mounted, so the default would put images in RAM. Give a directory on a real disk: podman-setup /path  /  /mnt/data 没有挂载,默认路径会把镜像放进内存;请指定磁盘上的目录: podman-setup /路径"
+fi
+mkdir -p "$DATA/storage" || die "cannot create $DATA/storage"
+
+# --- 1) netavark -> nftables
+if grep -q 'NETAVARK_FW' "$CC"; then
+	say "netavark firewall backend: already set"
+elif grep -q '^env *=' "$CC"; then
+	say "WARNING: $CC already has an env = line; add NETAVARK_FW=nftables to it yourself / 已有 env 设置,请自行加入 NETAVARK_FW=nftables"
+else
+	sed -i '/^\[engine\]/a env = ["NETAVARK_FW=nftables"]' "$CC"
+	grep -q 'NETAVARK_FW' "$CC" || die "could not edit $CC"
+	say "netavark firewall backend: nftables"
+fi
+
+# --- 2) storage
+sed -i "s|^graphroot *=.*|graphroot = \"$DATA/storage\"|" "$SC"
+say "storage: $DATA/storage"
+
+# --- 3) service off
+if [ -x /etc/init.d/podman ]; then
+	/etc/init.d/podman stop >/dev/null 2>&1
+	/etc/init.d/podman disable 2>/dev/null
+	say "podman service: not started at boot"
+fi
+
+# --- 4) firewall zone + rules
+if ! uci -q get firewall.podman >/dev/null; then
+	uci set firewall.podman=zone
+	uci set firewall.podman.name='podman'
+	uci set firewall.podman.device='podman0'
+	uci set firewall.podman.input='REJECT'
+	uci set firewall.podman.output='ACCEPT'
+	uci set firewall.podman.forward='REJECT'
+	uci set firewall.podman.masq='0'
+	uci set firewall.podman_wan=forwarding
+	uci set firewall.podman_wan.src='podman'
+	uci set firewall.podman_wan.dest='wan'
+	uci set firewall.podman_dns=rule
+	uci set firewall.podman_dns.name='Podman-allow-DNS'
+	uci set firewall.podman_dns.src='podman'
+	uci set firewall.podman_dns.proto='tcp udp'
+	uci set firewall.podman_dns.dest_port='53'
+	uci set firewall.podman_dns.target='ACCEPT'
+	say "firewall: zone podman created"
+else
+	say "firewall: zone podman already there"
+fi
+
+# --- 6) PassWall2 ports
+if [ -f /etc/config/passwall2 ] && ! uci -q get firewall.podman_pw2_dns >/dev/null; then
+	uci set firewall.podman_pw2_dns=rule
+	uci set firewall.podman_pw2_dns.name='Podman-allow-PassWall2-DNS'
+	uci set firewall.podman_pw2_dns.src='podman'
+	uci set firewall.podman_pw2_dns.proto='tcp udp'
+	uci set firewall.podman_pw2_dns.dest_port="$PW2_DNS_PORT"
+	uci set firewall.podman_pw2_dns.target='ACCEPT'
+	uci set firewall.podman_pw2_tcp=rule
+	uci set firewall.podman_pw2_tcp.name='Podman-allow-PassWall2-TCP'
+	uci set firewall.podman_pw2_tcp.src='podman'
+	uci set firewall.podman_pw2_tcp.proto='tcp'
+	uci set firewall.podman_pw2_tcp.dest_port="$PW2_TCP_PORT"
+	uci set firewall.podman_pw2_tcp.target='ACCEPT'
+	say "firewall: PassWall2 ports $PW2_DNS_PORT (DNS) and $PW2_TCP_PORT (TCP) allowed for containers"
+fi
+uci commit firewall
+
+# --- 5) dnsmasq
+if ! uci -q get dhcp.@dnsmasq[0].notinterface | grep -qw podman0; then
+	uci add_list dhcp.@dnsmasq[0].notinterface='podman0'
+	say "dnsmasq: no longer listens on podman0"
+fi
+uci commit dhcp
+
+/etc/init.d/firewall reload >/dev/null 2>&1
+/etc/init.d/dnsmasq restart >/dev/null 2>&1
+
+say "done. Test / 完成,测试: podman run --rm quay.io/libpod/alpine ping -c1 223.5.5.5"
+exit 0
