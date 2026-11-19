@@ -184,6 +184,13 @@ jobs:
           cp "$GITHUB_WORKSPACE/files/etc/uci-defaults/99-clx-s20p-defaults" files/etc/uci-defaults/
           chmod 755 files/etc/uci-defaults/99-clx-s20p-defaults
           ls -l files/etc/uci-defaults/
+          # Container helper (Podman itself is installed from the official feed on demand, then podman-setup configures it)
+          # and a larger cap for netlink receive buffers (nlbwmon). Both are plain files from this repository.
+          mkdir -p files/usr/sbin files/etc/sysctl.d
+          cp "$GITHUB_WORKSPACE/files/usr/sbin/podman-setup" files/usr/sbin/
+          chmod 755 files/usr/sbin/podman-setup
+          cp "$GITHUB_WORKSPACE/files/etc/sysctl.d/99-clx-s20p.conf" files/etc/sysctl.d/
+          chmod 644 files/etc/sysctl.d/99-clx-s20p.conf
 
       - name: Add full-cone NAT (nftables fullcone, patches adapted from ImmortalWrt)
         working-directory: openwrt
@@ -401,6 +408,11 @@ jobs:
           # eMMC health page + the tool it calls
           CONFIG_PACKAGE_luci-app-emmc-health=y
           CONFIG_PACKAGE_mmc-utils=y
+          # Container support. Podman/Docker are NOT built here (netavark needs a Rust host toolchain, OpenWrt would compile
+          # LLVM+rustc from source); they come from the official feed on demand. What the kernel must provide is built here:
+          # the memory cgroup (without it "podman run --memory" is silently ignored) and veth for the container bridge.
+          CONFIG_KERNEL_MEMCG=y
+          CONFIG_PACKAGE_kmod-veth=y
 
           # Third-party apps kept per user choice (sources cloned into package/extra)
           CONFIG_PACKAGE_xz-utils=y
@@ -454,6 +466,8 @@ jobs:
           chk '^CONFIG_ALL_KMODS=y'
           chk '^CONFIG_PACKAGE_luci=y'
           chk '^CONFIG_PACKAGE_conntrack=y'
+          chk '^CONFIG_KERNEL_MEMCG=y'
+          chk '^CONFIG_PACKAGE_kmod-veth=y'
           # Every non-conditional dependency of the packages we add must exist (a missing one only fails at the very end of the build)
           for p in luci-app-turboacc luci-app-nlbwmon luci-app-autoreboot luci-app-emmc-health mmc-utils; do
             for d in $(awk -v p="$p" '$0=="Package: " p {f=1; next} /^Package: /{f=0} f && /^Depends: /{sub(/^Depends: /,""); print}' tmp/.packageinfo); do
@@ -549,8 +563,12 @@ jobs:
           [ "$(tr -cd '\r' < "$R/etc/init.d/turboacc" | wc -c)" = 0 ] && echo "verify ok: turboacc init script has LF line endings" || echo "VERIFY FAILED: turboacc init script has CRLF"
           [ -s "$R/usr/share/luci/menu.d/luci-app-autoreboot.json" ] && [ -x "$R/etc/init.d/autoreboot" ] && echo "verify ok: luci-app-autoreboot in image" || echo "VERIFY FAILED: luci-app-autoreboot"
           [ -s "$R/usr/share/luci/menu.d/luci-app-nlbwmon.json" ] && [ -x "$R/usr/sbin/nlbwmon" ] && echo "verify ok: luci-app-nlbwmon + nlbwmon in image" || echo "VERIFY FAILED: nlbwmon"
-          [ -s "$R/usr/share/luci/menu.d/luci-app-emmc-health.json" ] && [ -x "$R/usr/libexec/emmc-health" ] && [ -x "$R/usr/sbin/mmc" ] && echo "verify ok: luci-app-emmc-health + mmc in image" || echo "VERIFY FAILED: emmc-health / mmc"
+          [ -s "$R/usr/share/luci/menu.d/luci-app-emmc-health.json" ] && [ -x "$R/usr/libexec/emmc-health" ] && { [ -x "$R/sbin/mmc" ] || [ -x "$R/usr/sbin/mmc" ]; } && echo "verify ok: luci-app-emmc-health + mmc in image" || echo "VERIFY FAILED: emmc-health / mmc"
           grep -q "turboacc" "$R/etc/uci-defaults/99-clx-s20p-defaults" && grep -q "aarch64_generic" "$R/etc/uci-defaults/99-clx-s20p-defaults" && grep -q "Interface" "$R/etc/uci-defaults/99-clx-s20p-defaults" && echo "verify ok: defaults script enables turboacc, adds apk arch, binds dropbear to lan" || echo "VERIFY FAILED: defaults script content"
+          grep -q '^CONFIG_MEMCG=y' "$KC" && echo "verify ok: kernel has CONFIG_MEMCG (container memory limits are enforced)" || echo "VERIFY FAILED: kernel CONFIG_MEMCG"
+          [ -n "$(find "$R/lib/modules" -name 'veth.ko' 2>/dev/null | head -1)" ] && echo "verify ok: kmod veth in image" || echo "VERIFY FAILED: kmod veth"
+          [ -x "$R/usr/sbin/podman-setup" ] && sh -n "$R/usr/sbin/podman-setup" && echo "verify ok: podman-setup in image (executable, syntax ok)" || echo "VERIFY FAILED: podman-setup"
+          grep -q 'rmem_max=524288' "$R/etc/sysctl.d/99-clx-s20p.conf" 2>/dev/null && echo "verify ok: sysctl netlink buffer cap in image" || echo "VERIFY FAILED: sysctl rmem_max file"
           [ -x "$R/usr/sbin/smbd" ] && echo "verify ok: samba (smbd) in image" || echo "VERIFY FAILED: smbd"
           [ -x "$R/usr/sbin/conntrack" ] && echo "verify ok: conntrack CLI in image" || echo "VERIFY FAILED: conntrack CLI"
           grep -E "flow_offloading|fullcone" "$R/etc/config/firewall" | tr -s '\t ' ' ' | head -6
@@ -620,6 +638,7 @@ jobs:
           - Extra packages / 额外插件: iStore store, quickstart, aurora theme, mini-diskmanager, ttyd, samba4, luci-compat, openssh-sftp-server, luci-app-turboacc (Network → Turbo ACC Center), luci-app-nlbwmon, luci-app-autoreboot, luci-app-emmc-health, conntrack (conntrack-tools CLI); kernel modules kmod-tun / kmod-nf-conntrack-netlink / kmod-inet-diag / kmod-netlink-diag / kmod-nft-tproxy and coreutils-nohup are in the image; all other kernel modules are built as packages
           - Full-cone NAT (nftables, not in official OpenWrt; patches in fullcone/), software + hardware flow offloading and BBR are ON by default and are controlled from Network → Turbo ACC Center (the first-boot script no longer writes those firewall options; Turbo ACC applies them at every boot, so changing them on the LuCI firewall page is overwritten at the next boot; in firewall4 hardware offloading only works together with software offloading). IPv6 full-cone stays off (with a delegated prefix every device has its own public IPv6 address). Leave "MTK WED WO offloading" off unless you know you need it (it reloads the WiFi driver). A kernel patch (conntrack events) lets nft_fullcone and nf_conntrack_netlink coexist / 全锥型 NAT、软硬件流量卸载和 BBR 默认开启，由"网络 → Turbo ACC Center"统一控制（首次开机脚本不再写这几项防火墙选项；Turbo ACC 每次开机会重新应用，所以在 LuCI 防火墙页改这几项会在下次开机被改回来；firewall4 里硬件卸载必须和软件卸载一起才生效）。IPv6 全锥形默认关（有 IPv6 前缀时每台设备都有自己的公网 IPv6 地址）。"MTK WED WO offloading"不要勾，除非你清楚需要它（会重载 WiFi 驱动）。内核补丁让 nft_fullcone 和 nf_conntrack_netlink 可以共存
           - Security defaults / 安全默认设置: SSH (dropbear) listens on the LAN interface only and the WAN-side Ping / IPsec ESP / ISAKMP accept rules are disabled (the WAN zone still rejects all other incoming traffic); password login stays enabled, so set a key and turn password login off yourself if the router has a public IP / SSH 只监听 LAN 接口，WAN 侧 Ping、IPsec ESP、ISAKMP 的放行规则默认关闭（WAN 区域仍拒绝其他入站）；密码登录仍然开启，如果路由器有公网 IP，请自行配置密钥并关闭密码登录
+          - Containers / 容器: the kernel has the memory cgroup and kmod-veth is in the image; Podman itself is not included (it is built from Go and Rust and would add hours to the build). Install it from the official feed with 'apk add podman', then run 'podman-setup' once (storage on the data partition, nftables backend for firewall4, firewall zone, DNS). Docker is not recommended on firewall4 / 内核已开启内存 cgroup,镜像里带 kmod-veth;不含 Podman 本体(它由 Go 和 Rust 编译,会让构建多出很多小时)。用 'apk add podman' 从官方源安装,再运行一次 'podman-setup'(存储放数据分区、nftables 后端适配 fw4、防火墙区、DNS)。fw4 上不推荐 Docker
           - First-boot defaults / 首次开机默认设置: data partition p7 is mounted at /mnt/data (matched by device, never formatted), UPnP on (plus a first-boot patch for carrier-grade NAT WAN addresses 100.64.x, where the stock miniupnpd init script rejects all port mappings; applied and tested by hand on the maintainer's router, not yet verified from this image), samba is installed without any share / p7 数据分区挂载到 /mnt/data（按设备匹配，不会格式化），UPnP 开（另有首次开机补丁，处理运营商 CGNAT 的 100.64.x 地址下官方 miniupnpd 脚本拒绝所有端口映射的问题；已在维护者路由器上手动验证，尚未从这个镜像验证），samba 已装但没有任何共享
           - iStore installs go straight to the origin server (the mirror repo.istoreos.com was unreliable) / iStore 装包直接走源站（镜像不稳定）
           - Known: browser-based NAT checkers may read "port restricted" although full-cone is on and a raw UDP (RFC 3489) test shows full-cone mapping, and probes from other IPs/ports reach the LAN; the cause of the display value is not established / 已知：网页版 NAT 检测可能显示"端口受限"，但全锥型已开，原始 UDP（RFC 3489）测试是全锥形映射，换 IP/换端口的探测包也能到达局域网；这个显示值的原因尚未查明
