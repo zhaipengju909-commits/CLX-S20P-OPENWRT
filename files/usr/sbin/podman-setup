@@ -20,6 +20,10 @@
 #      防火墙新建 "podman" 区:容器只能上外网和用路由器的 DNS,别的都不行
 #   5. dnsmasq stops listening on podman0, so the container DNS (aardvark-dns) can bind 10.88.0.1:53
 #      dnsmasq 不再监听 podman0,容器 DNS(aardvark-dns)才能绑定 10.88.0.1:53
+#   7. LAN devices may reach containers' published ports (podman run -p); the internet side still cannot
+#      局域网设备可以访问容器用 -p 发布的端口;外网仍然访问不到
+#   8. containers started with --restart=always are started again after a reboot (OpenWrt does not do this by itself)
+#      用 --restart=always 创建的容器重启路由器后会自动启动(OpenWrt 自己不会做这件事)
 #   6. if PassWall2 is installed: lets containers reach its DNS and TCP redirect ports (defaults below; they
 #      are what PassWall2 used on the author's router, check them if container traffic does not work)
 #      如果装了 PassWall2:放行容器到它的 DNS 和 TCP 重定向端口(下面是作者路由器上的默认值,容器不通时请核对)
@@ -92,6 +96,14 @@ else
 	say "firewall: zone podman already there"
 fi
 
+# --- 7) LAN -> podman forwarding (without it published ports are refused from the LAN; verified on the S20 Pro)
+if ! uci -q get firewall.lan_podman >/dev/null; then
+	uci set firewall.lan_podman=forwarding
+	uci set firewall.lan_podman.src='lan'
+	uci set firewall.lan_podman.dest='podman'
+	say "firewall: LAN may reach published container ports"
+fi
+
 # --- 6) PassWall2 ports
 if [ -f /etc/config/passwall2 ] && ! uci -q get firewall.podman_pw2_dns >/dev/null; then
 	uci set firewall.podman_pw2_dns=rule
@@ -116,6 +128,28 @@ if ! uci -q get dhcp.@dnsmasq[0].notinterface | grep -qw podman0; then
 	say "dnsmasq: no longer listens on podman0"
 fi
 uci commit dhcp
+
+# --- 8) start restart-policy=always containers at boot, once the storage directory exists
+AS=/etc/init.d/podman-autostart
+if [ ! -f "$AS" ]; then
+	cat > "$AS" <<'EOF'
+#!/bin/sh /etc/rc.common
+# Start containers created with --restart=always. Written by podman-setup. / 由 podman-setup 生成。
+START=99
+STOP=10
+start() {
+	(
+		GR=$(sed -n 's|^graphroot *= *"\(.*\)"|\1|p' /etc/containers/storage.conf)
+		i=0
+		while [ -n "$GR" ] && [ ! -d "$GR" ] && [ "$i" -lt 60 ]; do sleep 2; i=$((i+1)); done
+		podman start --all --filter restart-policy=always >/dev/null 2>&1
+	) &
+}
+EOF
+	chmod 755 "$AS"
+	say "boot: containers with --restart=always start after reboot"
+fi
+"$AS" enabled || "$AS" enable
 
 /etc/init.d/firewall reload >/dev/null 2>&1
 /etc/init.d/dnsmasq restart >/dev/null 2>&1
